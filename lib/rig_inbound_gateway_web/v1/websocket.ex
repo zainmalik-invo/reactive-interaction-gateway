@@ -156,8 +156,7 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
     new_state = Map.put(state, :subscriptions, subscriptions)
 
     # Fetch current offsets before processing new subscriptions
-    {:ok, offset_info} =
-      Rig.Redis.get_client_offset_info(state.client_id) |> IO.inspect(label: "stored_offsets")
+    {:ok, offset_info} = Rig.Redis.get_client_offset_info(state.client_id)
 
     stored_offsets =
       Enum.into(offset_info, %{}, fn %{
@@ -167,8 +166,6 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
                                      } ->
         {event_type, %{offset: offset, partition: partition}}
       end)
-
-    IO.inspect(stored_offsets: stored_offsets)
 
     Enum.each(subscriptions, fn %Rig.Subscription{
                                   event_type: et,
@@ -187,9 +184,6 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
           _ ->
             {nil, 0}
         end
-
-      IO.inspect(effective_offset: effective_offset)
-      IO.inspect(effective_partition: effective_partition)
 
       if effective_offset != nil do
         {:ok, _pid} =

@@ -48,11 +48,6 @@ defmodule RigKafka.Client do
 
     @impl :brod_group_subscriber
     def handle_message(topic, partition, msg_record, %{callback: callback} = state) do
-      IO.inspect(msg_record: msg_record)
-      IO.inspect(state: state)
-      IO.inspect(topic: topic)
-      IO.inspect(partition: partition)
-
       # Measure processing time for metrics
       metrics_start_time = System.monotonic_time()
 

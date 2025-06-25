@@ -79,8 +79,7 @@ defmodule RigInboundGatewayWeb.V1.SSE do
       |> send_via(req)
 
       # Fetch stored offsets from Redis using client_id
-      case Rig.Redis.get_client_offset_info(request.client_id)
-           |> IO.inspect(label: "stored_offsets") do
+      case Rig.Redis.get_client_offset_info(request.client_id) do
         {:ok, offset_info} when length(offset_info) > 0 ->
           Logger.info(
             "Found stored offsets for client #{request.client_id}: #{inspect(offset_info)}"
@@ -209,8 +208,7 @@ defmodule RigInboundGatewayWeb.V1.SSE do
     # Fetch current offsets before processing new subscriptions
     {client_id, req} = get_client_id(req)
 
-    {:ok, offset_info} =
-      Rig.Redis.get_client_offset_info(client_id) |> IO.inspect(label: "stored_offsets")
+    {:ok, offset_info} = Rig.Redis.get_client_offset_info(client_id)
 
     stored_offsets =
       Enum.into(offset_info, %{}, fn %{
@@ -220,8 +218,6 @@ defmodule RigInboundGatewayWeb.V1.SSE do
                                      } ->
         {event_type, %{offset: offset, partition: partition}}
       end)
-
-    IO.inspect(stored_offsets: stored_offsets)
 
     Enum.each(subscriptions, fn %Rig.Subscription{
                                   event_type: et,
@@ -240,9 +236,6 @@ defmodule RigInboundGatewayWeb.V1.SSE do
           _ ->
             {nil, 0}
         end
-
-      IO.inspect(effective_offset: effective_offset)
-      IO.inspect(effective_partition: effective_partition)
 
       if effective_offset != nil do
         {:ok, _pid} =

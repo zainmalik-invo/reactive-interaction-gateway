@@ -52,11 +52,6 @@ defmodule Rig.Redis do
     # Use the converted partition_int in the field key
     field = "#{event_type}:#{partition_int}"
 
-    IO.inspect(field: field)
-    IO.inspect(hash_key: hash_key)
-    IO.inspect(partition_int: partition_int)
-    IO.inspect(offset_int: offset_int)
-
     GenServer.call(__MODULE__, {:hset, hash_key, field, to_string(offset_int)})
   end
 
@@ -96,8 +91,6 @@ defmodule Rig.Redis do
         {:ok, %{}}
 
       {:ok, fields} ->
-        IO.inspect(fields: fields, label: "Raw Redis fields")
-
         offsets =
           fields
           |> Enum.chunk_every(2)
@@ -121,12 +114,10 @@ defmodule Rig.Redis do
             end
           end)
           |> Enum.filter(&(&1 != nil))
-          |> IO.inspect(label: "Parsed offsets")
           |> Enum.group_by(fn {event_type, _} -> event_type end, fn {_event_type,
                                                                      {partition, offset}} ->
             {partition, offset}
           end)
-          |> IO.inspect(label: "Grouped by event type")
           |> Map.new(fn {event_type, partition_offsets} ->
             # Get the highest offset for this event_type
             {_partition, highest_offset} =
@@ -135,7 +126,6 @@ defmodule Rig.Redis do
             {event_type, highest_offset}
           end)
 
-        IO.inspect(offsets: offsets, label: "Final offsets")
         {:ok, offsets}
 
       {:error, reason} ->
@@ -297,7 +287,6 @@ defmodule Rig.Redis do
   @impl true
   def handle_call({:hset, hash_key, field, value}, _from, %{conn: conn} = state) do
     result = Redix.command(conn, ["HSET", hash_key, field, value])
-    IO.inspect(result, label: "result -> ")
     {:reply, result, state}
   end
 
