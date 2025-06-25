@@ -25,6 +25,10 @@ defmodule Rig.EventStream.KafkaToFilter do
           cloud_event =
             cloud_event
             |> Tracing.append_context(Tracing.context(), :private)
+            |> Map.put(:extensions, %{
+              "x-kafka-partition" => get_value_from_headers(headers, "x-kafka-partition"),
+              "x-kafka-offset" => get_value_from_headers(headers, "x-kafka-offset")
+            })
 
           Logger.debug(fn -> inspect(cloud_event) end)
           EventFilter.forward_event(cloud_event)
@@ -36,6 +40,14 @@ defmodule Rig.EventStream.KafkaToFilter do
     end
   rescue
     err -> {:error, {:failed_to_parse_kafka_message, headers, body, err}}
+  end
+
+  defp get_value_from_headers(headers, key) do
+    headers
+    |> Enum.find(fn {k, _} -> k == key end)
+    |> case do
+      {_, value} -> value
+    end
   end
 end
 

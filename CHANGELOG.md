@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Redis Client ID Persistence for Event Replay**: Added support for persisting client IDs in browser cookies to enable event replay functionality. This feature allows RIG to replay events that were sent while a client was disconnected, ensuring no messages are lost during temporary network interruptions or page refreshes.
+
+  **Why this is needed:**
+
+  - **Message Reliability**: Without client ID persistence, clients lose all events that occur during disconnections
+  - **Network Resilience**: Handles temporary network issues, mobile app backgrounding, and browser tab switching
+  - **User Experience**: Ensures users don't miss important real-time updates when reconnecting
+  - **Event Replay**: RIG can now replay events from the last known offset when a client reconnects with a stored client ID
+
+  **How it works:**
+
+  - Client ID is automatically stored in browser cookies when establishing SSE connections
+  - On reconnection, the stored client ID is sent to RIG via the `rig_redis_client_id` parameter
+  - RIG uses Redis to track the last processed offset for each client ID and event type
+  - When reconnecting, RIG replays events from the last known offset to the current head
+
+  **Redis Integration for Disconnection Handling:**
+
+  - **Offset Tracking**: Redis stores Kafka offsets per client ID, event type, and partition using hash keys like `rig:offsets:{client_id}`
+  - **Disconnection Detection**: When clients disconnect, RIG continues processing events and updating offsets in Redis
+  - **Reconnection Recovery**: On reconnection with `rig_redis_client_id`, RIG queries Redis for the last known offsets
+  - **Event Replay**: RIG creates a one-shot Kafka consumer to replay events from the stored offset to the current head
+  - **Message Deduplication**: Events are filtered to ensure clients don't receive duplicate messages during replay
+
+  **Usage:**
+
+  - Basic connections work as before (no changes required)
+  - For replay functionality, include `rig_redis_client_id` parameter in SSE URL
+  - Client ID is automatically managed via browser cookies in the provided examples
+  - Redis must be configured and running for offset persistence to work
+
+  **Configuration:**
+
+  - Redis connection settings in `config.exs` under `Rig.Redis` section
+  - Environment variables: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SOCKET_TIMEOUT`, `REDIS_SOCKET_CONNECT_TIMEOUT`, `REDIS_SSL`
+  - Client ID cookie name: `rig_redis_client_id` (configurable in client code)
+
+  See the [tutorial documentation](docs/tutorial.md) for implementation examples.
+
+### Changed
+
+- **Redis Connection Configuration**: Updated Redis connection to use detailed configuration parameters instead of simple URL strings, matching the format used in `config.exs`. This provides better control over connection timeouts, SSL settings, and other Redis connection parameters.
+
 ## [3.0.0] - 2022-08-12
 
 ### Added
@@ -37,12 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated Helm v2 template, kubectl yaml file and instructions in the `deployment` folder [#288](https://github.com/Accenture/reactive-interaction-gateway/issues/288)
 - Publish Helm Chart to Github pages. With this change, we can simply install the chart using
 
-    ```shell
-    helm repo add accenture https://accenture.github.io/reactive-interaction-gateway
-    helm install rig accenture/reactive-interaction-gateway
-    ```
+  ```shell
+  helm repo add accenture https://accenture.github.io/reactive-interaction-gateway
+  helm install rig accenture/reactive-interaction-gateway
+  ```
 
   More information, follow the [deployment Readme](./deployment/README.md). [#319](https://github.com/Accenture/reactive-interaction-gateway/issues/319)
+
 - make README smaller, easier to read and highlight features. [#284](https://github.com/Accenture/reactive-interaction-gateway/issues/284)
 - Updated Phoenix LiveDashboard setup to show also metrics based on the Prometheus metrics (for now only proxy and events metrics). [#157](https://github.com/Accenture/reactive-interaction-gateway/issues/157)
 - Updated [Channels Example](https://github.com/Accenture/reactive-interaction-gateway/tree/master/examples/channels-example) to use [Kafkajs](https://kafka.js.org/) and NodeJS 14. Updated [Smoke Tests](https://github.com/Accenture/reactive-interaction-gateway/tree/master/smoke_tests) to use NodeJS 14.

@@ -24,7 +24,7 @@ config :rig, RIG.Subscriptions,
 
 config :rig, Rig.EventStream.KafkaToFilter,
   # The list of brokers, given by a comma-separated list of host:port items:
-  brokers: {:system, :list, "KAFKA_BROKERS", []},
+  brokers: {:system, :list, "KAFKA_BROKERS", ["localhost:9092"]},
   serializer: {:system, "KAFKA_SERIALIZER", nil},
   schema_registry_host: {:system, "KAFKA_SCHEMA_REGISTRY_HOST", nil},
   # The list of topics to consume messages from:
@@ -53,6 +53,14 @@ config :rig, Rig.Connection.Codec,
   codec_default_key: "7tsf4Y6GTOfPY1iDo4PqZA=="
 
 config :porcelain, driver: Porcelain.Driver.Basic
+
+config :rig, Rig.Redis,
+  host: {:system, "REDIS_HOST", "localhost"},
+  port: {:system, "REDIS_PORT", 6379},
+  password: {:system, "REDIS_PASSWORD", nil},
+  socket_timeout: {:system, "REDIS_SOCKET_TIMEOUT", 5000},
+  socket_connect_timeout: {:system, "REDIS_SOCKET_CONNECT_TIMEOUT", 5000},
+  ssl: {:system, "REDIS_SSL", false}
 
 # --------------------------------------
 # Logger

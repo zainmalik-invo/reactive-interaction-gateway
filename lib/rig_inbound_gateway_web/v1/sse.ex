@@ -21,12 +21,14 @@ defmodule RigInboundGatewayWeb.V1.SSE do
   @heartbeat_interval_ms 15_000
   @subscription_refresh_interval_ms 60_000
 
-  # ---
-
   @impl :cowboy_loop
   def init(req, _state) do
     query_params = req |> :cowboy_req.parse_qs() |> Enum.into(%{})
     jwt = query_params["jwt"]
+
+    # Get client_id from cookies
+    {client_id, req} = get_client_id(req)
+    Logger.info("client_id: #{inspect(client_id)}")
 
     auth_info =
       case jwt do
@@ -43,7 +45,8 @@ defmodule RigInboundGatewayWeb.V1.SSE do
           auth_info: auth_info,
           query_params: "",
           content_type: "application/json; charset=utf-8",
-          body: encoded_body_or_nil
+          body: encoded_body_or_nil,
+          client_id: client_id
         }
 
         setup_connection(req, request)
@@ -62,25 +65,76 @@ defmodule RigInboundGatewayWeb.V1.SSE do
 
     on_success = fn subscriptions ->
       # Tell the client the request is good and the response is chunked:
-      req =
-        :cowboy_req.stream_reply(
-          200,
-          %{
-            "content-type" => "text/event-stream; charset=utf-8",
-            "cache-control" => "no-cache",
-            "access-control-allow-origin" => conf.cors
-          },
-          req
-        )
+      headers = %{
+        "content-type" => "text/event-stream; charset=utf-8",
+        "cache-control" => "no-cache",
+        "access-control-allow-origin" => conf.cors
+      }
+
+      req = :cowboy_req.stream_reply(200, headers, req)
 
       # Say hello to the client:
-      Events.welcome_event()
+      Events.welcome_event(self(), request.client_id)
       |> to_server_sent_event()
       |> send_via(req)
 
-      # Enter the loop and wait for cloud events to forward to the client:
-      state = %{subscriptions: subscriptions}
-      {:cowboy_loop, req, state, :hibernate}
+      # Fetch stored offsets from Redis using client_id
+      case Rig.Redis.get_client_offset_info(request.client_id)
+           |> IO.inspect(label: "stored_offsets") do
+        {:ok, offset_info} when length(offset_info) > 0 ->
+          Logger.info(
+            "Found stored offsets for client #{request.client_id}: #{inspect(offset_info)}"
+          )
+
+          # Convert to the format expected by the rest of the code
+          stored_offsets =
+            Enum.into(offset_info, %{}, fn %{
+                                             event_type: event_type,
+                                             offset: offset,
+                                             partition: partition
+                                           } ->
+              {event_type, %{offset: offset, partition: partition}}
+            end)
+
+          # Merge stored offsets with subscriptions
+          subscriptions_with_offsets =
+            Enum.map(subscriptions, fn subscription ->
+              event_type = subscription.event_type
+
+              case Map.get(stored_offsets, event_type) do
+                nil ->
+                  subscription
+
+                %{offset: offset, partition: partition}
+                when is_integer(offset) and is_integer(partition) ->
+                  # Don't start replay consumer here, it will be started in set_subscriptions
+                  %{subscription | start_offset: offset}
+              end
+            end)
+
+          state = %{
+            subscriptions: subscriptions_with_offsets,
+            client_id: request.client_id
+          }
+
+          # Initialize event filter with merged subscriptions
+          EventFilter.refresh_subscriptions(subscriptions_with_offsets, [])
+          Process.send_after(self(), :refresh_subscriptions, @subscription_refresh_interval_ms)
+
+          {:cowboy_loop, req, state, :hibernate}
+
+        _ ->
+          state = %{
+            subscriptions: subscriptions,
+            client_id: request.client_id
+          }
+
+          # Initialize event filter with original subscriptions
+          EventFilter.refresh_subscriptions(subscriptions, [])
+          Process.send_after(self(), :refresh_subscriptions, @subscription_refresh_interval_ms)
+
+          {:cowboy_loop, req, state, :hibernate}
+      end
     end
 
     on_error = fn reason ->
@@ -121,7 +175,20 @@ defmodule RigInboundGatewayWeb.V1.SSE do
 
   @impl :cowboy_loop
   def info(event, req, state) when is_struct(event) do
-    Logger.debug(fn -> "event: " <> inspect(event) end)
+    Logger.debug(fn -> "event in sse: " <> inspect(event) end)
+
+    if event.extensions != %{} do
+      {client_id, _req} = get_client_id(req)
+      partition = Map.get(event.extensions, "x-kafka-partition")
+      offset = Map.get(event.extensions, "x-kafka-offset")
+
+      Rig.Redis.store_offset(
+        client_id,
+        event.type,
+        partition,
+        offset
+      )
+    end
 
     # Forward the event to the client:
     event
@@ -133,20 +200,72 @@ defmodule RigInboundGatewayWeb.V1.SSE do
 
   @impl :cowboy_loop
   def info({:set_subscriptions, subscriptions}, req, state) do
-    Logger.debug(fn -> "subscriptions: " <> inspect(subscriptions) end)
+    Logger.debug(fn -> "subscriptions: #{inspect(subscriptions)}" end)
 
-    # Trigger immediate refresh:
-    EventFilter.refresh_subscriptions(subscriptions, state.subscriptions)
-
-    # Replace current subscriptions:
-    state = Map.put(state, :subscriptions, subscriptions)
-
-    # Notify the client:
     Events.subscriptions_set(subscriptions)
     |> to_server_sent_event()
     |> send_via(req)
 
-    {:ok, req, state, :hibernate}
+    # Fetch current offsets before processing new subscriptions
+    {client_id, req} = get_client_id(req)
+
+    {:ok, offset_info} =
+      Rig.Redis.get_client_offset_info(client_id) |> IO.inspect(label: "stored_offsets")
+
+    stored_offsets =
+      Enum.into(offset_info, %{}, fn %{
+                                       event_type: event_type,
+                                       offset: offset,
+                                       partition: partition
+                                     } ->
+        {event_type, %{offset: offset, partition: partition}}
+      end)
+
+    IO.inspect(stored_offsets: stored_offsets)
+
+    Enum.each(subscriptions, fn %Rig.Subscription{
+                                  event_type: et,
+                                  constraints: constraints,
+                                  start_offset: offset
+                                } ->
+      {effective_offset, effective_partition} =
+        case {offset, Map.get(stored_offsets, et)} do
+          {nil, %{offset: stored_offset, partition: stored_partition}}
+          when is_integer(stored_offset) ->
+            {stored_offset, stored_partition}
+
+          {client_offset, _} when is_integer(client_offset) ->
+            {client_offset, 0}
+
+          _ ->
+            {nil, 0}
+        end
+
+      IO.inspect(effective_offset: effective_offset)
+      IO.inspect(effective_partition: effective_partition)
+
+      if effective_offset != nil do
+        {:ok, _pid} =
+          RigKafka.ReplayKafkaConsumer.start_link(%{
+            conn_pid: self(),
+            event_type: et,
+            constraints: constraints,
+            start_offset: effective_offset,
+            partition: effective_partition
+          })
+      else
+        live_sub = %Rig.Subscription{
+          event_type: et,
+          constraints: constraints,
+          start_offset: nil
+        }
+
+        EventFilter.refresh_subscriptions([live_sub], [])
+      end
+    end)
+
+    new_state = Map.put(state, :subscriptions, subscriptions)
+    {:ok, req, new_state, :hibernate}
   end
 
   @impl :cowboy_loop
@@ -172,12 +291,16 @@ defmodule RigInboundGatewayWeb.V1.SSE do
   # ---
 
   @impl :cowboy_loop
-  def terminate(reason, _req, _state) do
+  def terminate(reason, _req, state) do
     Logger.debug(fn ->
       pid = inspect(self())
       reason = "reason=" <> inspect(reason)
       "Closing SSE connection (#{pid}, #{reason})"
     end)
+
+    if is_map(state) and Map.has_key?(state, :client_id) do
+      Rig.Redis.delete_offsets(state.client_id)
+    end
 
     :ok
   end
@@ -215,5 +338,39 @@ defmodule RigInboundGatewayWeb.V1.SSE do
   defp send_via(event, cowboy_req) do
     :cowboy_req.stream_events(event, :nofin, cowboy_req)
     Logger.debug(fn -> "Sent via SSE: " <> inspect(event) end)
+  end
+
+  defp get_client_id(req) do
+    # 1. Try to get from query params
+    query_params = :cowboy_req.parse_qs(req)
+    query_map = Enum.into(query_params, %{})
+
+    case Map.get(query_map, "rig_redis_client_id") do
+      nil ->
+        # 2. Try to get from cookies
+        cookies = :cowboy_req.parse_cookies(req)
+
+        case cookies do
+          {:ok, cookies_list} when is_list(cookies_list) ->
+            case Enum.find(cookies_list, fn {key, _value} -> key == "rig_redis_client_id" end) do
+              {client_id, _value} -> {client_id, req}
+              _ -> create_and_set_client_id(req)
+            end
+
+          _ ->
+            create_and_set_client_id(req)
+        end
+
+      client_id ->
+        {client_id, req}
+    end
+  end
+
+  defp create_and_set_client_id(req) do
+    client_id = "rig-redis-#{UUID.uuid4()}-#{System.os_time(:millisecond)}"
+    Logger.info("Creating and setting client_id: #{client_id}")
+
+    # Don't set cookie here, we'll set it in setup_connection
+    {client_id, req}
   end
 end

@@ -188,7 +188,8 @@ defmodule RIG.MixProject do
       # Rate limiting via leaky bucket
       {:ex_rated, "~> 1.2"},
       # JSON Log backend
-      {:logger_json, "~> 4.0"}
+      {:logger_json, "~> 4.0"},
+      {:redix, "~> 1.0"}
     ]
   end
 

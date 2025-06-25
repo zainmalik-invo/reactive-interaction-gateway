@@ -29,13 +29,17 @@ defmodule Rig.Subscription do
 
   @type t :: %__MODULE__{
           event_type: String.t(),
-          constraints: constraints
+          constraints: constraints,
+          start_offset: non_neg_integer() | nil,
+          partition: non_neg_integer() | nil
         }
 
   @derive Jason.Encoder
   @enforce_keys [:event_type]
   defstruct event_type: nil,
-            constraints: []
+            constraints: [],
+            start_offset: nil,
+            partition: nil
 
   defimpl String.Chars do
     alias Rig.Subscription
@@ -51,7 +55,8 @@ defmodule Rig.Subscription do
   def new(%{} = params) do
     params = %{
       event_type: event_type(params),
-      constraints: constraints(params)
+      constraints: constraints(params),
+      start_offset: start_offset(params)
     }
 
     subscription = struct!(__MODULE__, params)
@@ -88,12 +93,29 @@ defmodule Rig.Subscription do
   defp constraints(%{"oneOf" => constraints}), do: constraints
   defp constraints(_), do: []
 
+  defp start_offset(%{start_offset: start_offset}), do: start_offset
+  defp start_offset(%{"startOffset" => start_offset}), do: start_offset
+  defp start_offset(_), do: nil
+
   # ---
 
-  defp validate(%__MODULE__{event_type: event_type, constraints: constraints}) do
+  defp validate(%__MODULE__{
+         event_type: event_type,
+         constraints: constraints,
+         start_offset: start_offset
+       }) do
     validate_event_type(event_type)
     validate_constraints(constraints)
+    validate_start_offset(start_offset)
   end
+
+  defp validate_start_offset(nil), do: :ok
+
+  defp validate_start_offset(start_offset) when is_integer(start_offset) and start_offset >= 0,
+    do: :ok
+
+  defp validate_start_offset(_),
+    do: throw({:error, "start-offset must be a non-negative integer"})
 
   # ---
 

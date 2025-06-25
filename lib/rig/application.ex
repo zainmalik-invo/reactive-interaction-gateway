@@ -9,7 +9,6 @@ defmodule Rig.Application do
   alias RIG.Discovery
   alias RIG.Tracing
   alias RigOutboundGateway.Kinesis
-
   alias LoggerJSON.Formatters.BasicLogger
 
   def start(_type, _args) do
@@ -24,6 +23,8 @@ defmodule Rig.Application do
 
     children = [
       {Phoenix.PubSub, name: Rig.PubSub},
+      # Redis:
+      Rig.Redis,
       # Kafka:
       {DynamicSupervisor, strategy: :one_for_one, name: RigKafka.DynamicSupervisor},
       # Event stream handling:

@@ -17,19 +17,26 @@ defmodule RigKafka.Client do
 
   use GenServer, shutdown: @reconnect_timeout_ms + 5_000, restart: :permanent
 
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # GroupSubscriber: implements :brod_group_subscriber
+  # ────────────────────────────────────────────────────────────────────────────
+  #
   defmodule GroupSubscriber do
     @moduledoc """
-    The group subscriber process handles messages from none or many partitions.
+    The group subscriber process handles messages from one or many partitions.
 
+    It extracts the raw payload and offset, puts the offset into headers (as
+    `"x-kafka-offset" => "<offset>"`), and then calls the user-supplied `callback.(body, headers)`.
     """
+
     @behaviour :brod_group_subscriber
     @metrics_source_label "kafka"
 
     import Record, only: [defrecord: 2, extract: 2]
-
     require Logger
-    require Record
 
+    # Generate a `kafka_message` record accessor from Brod's HRL
     defrecord :kafka_message, extract(:kafka_message, from_lib: "brod/include/brod.hrl")
 
     @type kafka_headers :: list()
@@ -39,27 +46,39 @@ defmodule RigKafka.Client do
       {:ok, state}
     end
 
-    # ---
-
     @impl :brod_group_subscriber
-    def handle_message(
-          topic,
-          partition,
-          message,
-          %{callback: callback} = state
-        ) do
-      # start to measure processing time for Prometheus metric
-      metrics_start_time_mono = System.monotonic_time()
-      %{offset: offset, value: body, headers: headers} = Enum.into(kafka_message(message), %{})
+    def handle_message(topic, partition, msg_record, %{callback: callback} = state) do
+      IO.inspect(msg_record: msg_record)
+      IO.inspect(state: state)
+      IO.inspect(topic: topic)
+      IO.inspect(partition: partition)
+
+      # Measure processing time for metrics
+      metrics_start_time = System.monotonic_time()
+
+      # Extract fields from the Erlang record:
+      offset = kafka_message(msg_record, :offset)
+      raw_body = kafka_message(msg_record, :value)
+      headers = kafka_message(msg_record, :headers)
+
+      # Prepend the offset into headers so the client can track it:
+      partition_offeset_headers =
+        [
+          {"x-kafka-offset", to_string(offset)},
+          {"x-kafka-partition", to_string(partition)}
+        ] ++ headers
 
       try do
-        case callback.(body, headers) do
+        # Directly invoke callback with raw_body (JSON string) and partition_offeset_headers.
+        # We do NOT decode JSON here. The callback (KafkaToFilter.kafka_handler/2)
+        # expects raw payload + headers so it can run Cloudevents.from_kafka_message/2 itself.
+        case callback.(raw_body, partition_offeset_headers) do
           :ok ->
-            # update Prometheus metric with calculated processing time
+            # Update Prometheus metric
             EventsMetrics.measure_event_processing(
               @metrics_source_label,
               topic,
-              System.monotonic_time() - metrics_start_time_mono
+              System.monotonic_time() - metrics_start_time
             )
 
             {:ok, :ack, state}
@@ -67,22 +86,24 @@ defmodule RigKafka.Client do
           err ->
             info = %{error: err, topic: topic, partition: partition, offset: offset}
             Logger.error("Callback failed to handle message: #{inspect(info)}")
-            # increase Prometheus metric with event failed to be consumed
             EventsMetrics.count_failed_event(@metrics_source_label, topic)
             {:ok, :ack_no_commit, state}
         end
       rescue
-        err ->
-          info = %{error: err, topic: topic, partition: partition, offset: offset}
-          Logger.error(fn -> {"failed to decode message: #{inspect(err)}", [info: info]} end)
-          # increase Prometheus metric with event failed to be consumed
+        runtime_err ->
+          info = %{error: runtime_err, topic: topic, partition: partition, offset: offset}
+          Logger.error(fn -> {"failed to process message", [info: info]} end)
           EventsMetrics.count_failed_event(@metrics_source_label, topic)
           {:ok, :ack_no_commit, state}
       end
     end
   end
 
-  # ---
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # Public API and GenServer callbacks
+  # ────────────────────────────────────────────────────────────────────────────
+  #
 
   @spec start_supervised(Config.t(), callback() | nil) :: {:ok, pid} | :ignore | {:error, any}
   def start_supervised(config, callback \\ nil) do
@@ -91,14 +112,10 @@ defmodule RigKafka.Client do
     DynamicSupervisor.start_child(@supervisor, {__MODULE__, opts})
   end
 
-  # ---
-
   @spec stop_supervised(pid) :: :ok | {:error, :not_found}
   def stop_supervised(client_pid) do
     DynamicSupervisor.terminate_child(@supervisor, client_pid)
   end
-
-  # ---
 
   @spec start_link(list) :: {:ok, pid} | :ignore | {:error, any}
   def start_link(opts) do
@@ -117,8 +134,9 @@ defmodule RigKafka.Client do
     end
   end
 
-  # ---
-
+  #
+  # Produce‐only API
+  #
   def produce(%{server_id: server_id}, topic, schema, key, plaintext, headers)
       when is_binary(topic) and is_binary(key) and is_binary(plaintext) and is_list(headers) do
     GenServer.call(server_id, {:produce, topic, schema, key, plaintext, headers})
@@ -129,18 +147,19 @@ defmodule RigKafka.Client do
     GenServer.call(server_id, {:produce, topic, schema, key, plaintext, []})
   end
 
-  # ---
-
-  @type kafka_headers :: list()
-
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # GenServer.init/1
+  # ────────────────────────────────────────────────────────────────────────────
+  #
   @impl GenServer
   def init(%{config: config} = args) do
     Process.flag(:trap_exit, true)
 
-    # Always start brod_client as it's needed for producing messages:
+    # Always start a brod_client (needed for producing messages)
     {:ok, brod_client} = start_brod_client(config)
 
-    # Only starts the subscriber in case there are any consumer topics:
+    # Only start the group subscriber if there are consumer_topics
     brod_group_subscriber =
       case start_brod_group_subscriber(args) do
         nil -> nil
@@ -156,8 +175,11 @@ defmodule RigKafka.Client do
     {:ok, state}
   end
 
-  # ---
-
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # Helper: start a brod client for producing
+  # ────────────────────────────────────────────────────────────────────────────
+  #
   defp start_brod_client(%{
          brokers: brokers,
          client_id: client_id,
@@ -176,8 +198,6 @@ defmodule RigKafka.Client do
     :brod_client.start_link(brokers, client_id, brod_client_conf)
   end
 
-  # ---
-
   defp add_ssl_conf(brod_client_conf, nil), do: brod_client_conf
 
   defp add_ssl_conf(brod_client_conf, config) do
@@ -187,7 +207,6 @@ defmodule RigKafka.Client do
       |> add_ssl_cert(:certfile, config.path_to_cert_pem)
       |> add_ssl_cert(:cacertfile, config.path_to_ca_cert_pem)
 
-    # The Erlang SSL module requires the password to be passed as a charlist:
     opts =
       case config.key_password do
         "" -> opts
@@ -197,49 +216,37 @@ defmodule RigKafka.Client do
     Keyword.put(brod_client_conf, :ssl, opts)
   end
 
-  # ---
-
-  @spec add_ssl_cert(opts :: [{atom, String.t()}], key :: String.t(), path :: String.t()) :: [
+  @spec add_ssl_cert(opts :: [{atom, String.t()}], key :: atom, path :: String.t()) :: [
           {atom, String.t()}
         ]
+  defp add_ssl_cert(opts, _key, path) when not is_binary(path), do: opts
 
-  defp add_ssl_cert(opts, key, path) when is_binary(path) and byte_size(path) > 0 do
-    Keyword.put(opts, key, resolve_path(path))
-  end
-
-  defp add_ssl_cert(opts, key, path), do: opts
-
-  # ---
-
-  @spec resolve_path(path :: String.t()) :: String.t()
-
-  defp resolve_path(path) do
+  defp add_ssl_cert(opts, key, path) do
     working_dir = :code.priv_dir(:rig)
-    expanded_path = Path.expand(path, working_dir)
-    true = File.regular?(expanded_path) || "#{path} is not a file"
-    expanded_path
+    expanded = Path.expand(path, working_dir)
+    true = File.regular?(expanded) || raise("#{path} is not a file")
+    Keyword.put(opts, key, expanded)
   end
-
-  # ---
 
   defp add_sasl_conf(brod_client_conf, nil), do: brod_client_conf
 
   defp add_sasl_conf(brod_client_conf, sasl) do
     if is_nil(brod_client_conf[:ssl]) do
-      Logger.warn("SASL is enabled, but SSL is not - credentials are transmitted as cleartext.")
+      Logger.warn("SASL is enabled, but SSL is not – credentials are transmitted as cleartext.")
     end
 
     Keyword.put(brod_client_conf, :sasl, sasl)
   end
 
-  # ---
-
-  defp start_brod_group_subscriber(%{config: %{consumer_topics: []}}) do
-    nil
-  end
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # Helper: start a brod group subscriber if consumer_topics are defined
+  # ────────────────────────────────────────────────────────────────────────────
+  #
+  defp start_brod_group_subscriber(%{config: %Config{consumer_topics: []}}), do: nil
 
   defp start_brod_group_subscriber(%{
-         config: %{
+         config: %Config{
            client_id: client_id,
            group_id: group_id,
            consumer_topics: consumer_topics,
@@ -261,8 +268,11 @@ defmodule RigKafka.Client do
     )
   end
 
-  # ---
-
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # GenServer.handle_call/3 for produce
+  # ────────────────────────────────────────────────────────────────────────────
+  #
   @impl GenServer
   def handle_call(
         {:produce, topic, schema, key, plaintext, headers},
@@ -291,8 +301,6 @@ defmodule RigKafka.Client do
     {:reply, result, state}
   end
 
-  # ---
-
   @impl GenServer
   def handle_info({:EXIT, from, reason}, state) do
     Logger.warn(fn ->
@@ -305,47 +313,33 @@ defmodule RigKafka.Client do
     {:stop, :shutdown, state}
   end
 
-  # ---
+  #
+  # ────────────────────────────────────────────────────────────────────────────
+  # Helpers for producing (try_producing_message, partitioning, etc.)
+  # ────────────────────────────────────────────────────────────────────────────
+  #
 
   @spec transform_content_type(map()) :: [{String.t(), String.t()}]
-  defp transform_content_type(%{"contenttype" => contenttype}) do
-    [
-      {"ce_contenttype", contenttype}
-    ]
-  end
+  defp transform_content_type(%{"contenttype" => contenttype}),
+    do: [{"ce_contenttype", contenttype}]
 
-  defp transform_content_type(%{"contentType" => contentType}) do
-    [
-      {"ce_contentType", contentType}
-    ]
-  end
+  defp transform_content_type(%{"contentType" => contentType}),
+    do: [{"ce_contentType", contentType}]
 
   defp transform_content_type(_), do: []
-
-  # ---
-
-  defp try_producing_message(
-         conf,
-         topic,
-         schema,
-         key,
-         plaintext,
-         headers,
-         retry_delay_divisor \\ 64
-       )
 
   defp try_producing_message(
          %{
            brod_client: brod_client,
            schema_registry_host: schema_registry_host,
            serializer: serializer
-         } = config,
+         } = conf,
          topic,
          schema,
          key,
          plaintext,
          headers,
-         retry_delay_divisor
+         retry_delay_divisor \\ 64
        ) do
     {constructed_headers, body} =
       case Jason.decode(plaintext) do
@@ -377,19 +371,14 @@ defmodule RigKafka.Client do
            topic,
            &compute_kafka_partition/4,
            key,
-           %{
-             value: body,
-             headers: constructed_headers
-           }
+           %{value: body, headers: constructed_headers}
          ) do
       :ok ->
-        # increase Prometheus metric with a produced event
         EventsMetrics.count_produced_event(@metrics_target_label, topic)
         :ok
 
       {:error, :leader_not_available} ->
         try_again? = retry_delay_divisor >= 1
-        # increase Prometheus metric with an event failed to be produced
         EventsMetrics.count_failed_produce_event(@metrics_target_label, topic)
 
         if try_again? do
@@ -402,7 +391,7 @@ defmodule RigKafka.Client do
           :timer.sleep(retry_delay_ms)
 
           try_producing_message(
-            config,
+            conf,
             topic,
             schema,
             key,
@@ -415,27 +404,22 @@ defmodule RigKafka.Client do
         end
 
       err ->
-        # increase Prometheus metric with an event failed to be produced
         EventsMetrics.count_failed_produce_event(@metrics_target_label, topic)
         err
     end
   end
 
-  # ---
-
-  defp compute_kafka_partition(_topic, n_partitions, key, _value)
-       when byte_size(key) > 0 do
+  defp compute_kafka_partition(_topic, n_partitions, key, _value) when byte_size(key) > 0 do
     partition =
       key
       |> Murmur.hash_x86_32()
-      |> abs
+      |> abs()
       |> rem(n_partitions)
 
     {:ok, partition}
   end
 
   defp compute_kafka_partition(_topic, n_partitions, _key, _value) do
-    # based on: https://github.com/klarna/brod#produce-with-random-partitioner
     random_partition = :crypto.rand_uniform(0, n_partitions)
     {:ok, random_partition}
   end

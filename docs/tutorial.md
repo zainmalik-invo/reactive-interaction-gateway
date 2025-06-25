@@ -103,62 +103,221 @@ In a real-world frontend app the above example to connect your app to RIG would 
 
 See [**examples/sse-demo.html**](https://github.com/Accenture/reactive-interaction-gateway/blob/master/examples/sse-demo.html) for a full example.
 
+## Basic Connection Example
+
 ```html
 <!DOCTYPE html>
 <html>
+  <head>
+    ...
+    <script src="https://unpkg.com/event-source-polyfill/src/eventsource.min.js"></script>
+  </head>
 
-<head>
-  ...
-  <script src="https://unpkg.com/event-source-polyfill/src/eventsource.min.js"></script>
-</head>
-
-<body>
-  ...
-
-  <script>
+  <body>
     ...
 
-    const source = new EventSource(`http://localhost:4000/_rig/v1/connection/sse`)
-
-    source.onopen = (e) => console.log("open", e)
-    source.onmessage = (e) => console.log("message", e)
-    source.onerror = (e) => console.log("error", e)
-
-    source.addEventListener("rig.connection.create", function (e) {
-      cloudEvent = JSON.parse(e.data)
-      payload = cloudEvent.data
-      connectionToken = payload["connection_token"]
-      createSubscription(connectionToken)
-    }, false);
-
-    source.addEventListener("greeting", function (e) {
-      cloudEvent = JSON.parse(e.data)
+    <script>
       ...
-    })
 
-    source.addEventListener("error", function (e) {
-      if (e.readyState == EventSource.CLOSED) {
-        console.log("Connection was closed.")
-      } else {
-        console.log("Connection error:", e)
-      }
-    }, false);
+      const source = new EventSource(`http://localhost:4000/_rig/v1/connection/sse`)
 
-    function createSubscription(connectionToken) {
-      const eventType = "greeting"
-      return fetch(`http://localhost:4000/_rig/v1/connection/sse/${connectionToken}/subscriptions`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            "subscriptions": [{
-              "eventType": eventType
-            }]
-          })
-        })
+      source.onopen = (e) => console.log("open", e)
+      source.onmessage = (e) => console.log("message", e)
+      source.onerror = (e) => console.log("error", e)
+
+      source.addEventListener("rig.connection.create", function (e) {
+        cloudEvent = JSON.parse(e.data)
+        payload = cloudEvent.data
+        connectionToken = payload["connection_token"]
+        createSubscription(connectionToken)
+      }, false);
+
+      source.addEventListener("greeting", function (e) {
+        cloudEvent = JSON.parse(e.data)
         ...
-    }
+      })
 
-  </script>
-</body>
+      source.addEventListener("error", function (e) {
+        if (e.readyState == EventSource.CLOSED) {
+          console.log("Connection was closed.")
+        } else {
+          console.log("Connection error:", e)
+        }
+      }, false);
+
+      function createSubscription(connectionToken) {
+        const eventType = "greeting"
+        return fetch(`http://localhost:4000/_rig/v1/connection/sse/${connectionToken}/subscriptions`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              "subscriptions": [{
+                "eventType": eventType
+              }]
+            })
+          })
+          ...
+      }
+    </script>
+  </body>
 </html>
 ```
+
+## Advanced Connection with Client ID Persistence (Optional)
+
+For applications that need to handle reconnections and receive missed messages, you can optionally persist the client ID. This allows RIG to replay events that were sent while the client was disconnected.
+
+```html
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>RIG SSE with Client ID Persistence</title>
+    <script src="https://unpkg.com/event-source-polyfill/src/eventsource.min.js"></script>
+  </head>
+
+  <body>
+    <h1>RIG SSE with Reconnection Support</h1>
+    <div id="log"></div>
+
+    <script>
+      // Helper to get a cookie by name
+      function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(";").shift();
+        return null;
+      }
+
+      // Helper to set a cookie
+      function setCookie(name, value, options = {}) {
+        const cookieOptions = {
+          path: "/",
+          "max-age": 31536000, // 1 year
+          samesite: "Lax",
+          ...options,
+        };
+
+        const cookieString = Object.entries(cookieOptions)
+          .map(([key, val]) => `${key}=${val}`)
+          .join("; ");
+
+        document.cookie = `${name}=${value}; ${cookieString}`;
+      }
+
+      // Check for existing client ID
+      const existingClientId = getCookie("rig_redis_client_id");
+
+      // Define your subscriptions
+      const subscriptions = [
+        {
+          eventType: "chatroom_message",
+          oneOf: [{}], // No constraints - receive all messages
+        },
+      ];
+
+      const subscriptionsJson = JSON.stringify(subscriptions);
+      const subscriptionsParam = encodeURIComponent(subscriptionsJson);
+
+      // Build the SSE URL with optional client ID
+      let eventSourceUrl = "http://localhost:4000/_rig/v1/connection/sse?";
+      if (existingClientId) {
+        eventSourceUrl += `rig_redis_client_id=${existingClientId}&`;
+      }
+      eventSourceUrl += `subscriptions=${subscriptionsParam}`;
+
+      console.log(`Connecting to SSE at: ${eventSourceUrl}`);
+
+      // Create the EventSource connection
+      const eventSource = new EventSource(eventSourceUrl);
+
+      // Connection opened
+      eventSource.addEventListener("open", () => {
+        console.log("[SSE] Connection opened");
+        logMessage("[SSE] Connection opened");
+      });
+
+      // Handle connection creation and store client ID
+      eventSource.addEventListener("rig.connection.create", (evt) => {
+        console.log(`[rig.connection.create] ${evt.data}`);
+        const parsed = JSON.parse(evt.data);
+        const clientId = parsed.data.client_id;
+
+        if (clientId) {
+          // Store the client ID for future reconnections
+          setCookie("rig_redis_client_id", clientId);
+          console.log(`[rig.connection.create] Client ID stored: ${clientId}`);
+          logMessage(`[rig.connection.create] Client ID stored: ${clientId}`);
+        }
+      });
+
+      // Handle subscription confirmation
+      eventSource.addEventListener("rig.subscriptions_set", (evt) => {
+        console.log(`[rig.subscriptions_set] ${evt.data}`);
+        logMessage(`[rig.subscriptions_set] ${evt.data}`);
+      });
+
+      // Handle chatroom messages
+      eventSource.addEventListener("chatroom_message", (evt) => {
+        console.log(`[chatroom_message] Raw data: ${evt.data}`);
+        try {
+          const parsed = JSON.parse(evt.data);
+          console.log(`[chatroom_message] Parsed:`, parsed);
+          logMessage(`[chatroom_message] ${JSON.stringify(parsed, null, 2)}`);
+        } catch (err) {
+          console.error(`[chatroom_message] JSON.parse error: ${err}`);
+          logMessage(`[chatroom_message] JSON.parse error: ${err}`);
+        }
+      });
+
+      // Handle offset errors (e.g., when requested offset is out of range)
+      eventSource.addEventListener("rig.offset_error", (evt) => {
+        console.error(`[rig.offset_error] ${evt.data}`);
+        logMessage(`[rig.offset_error] ${evt.data}`);
+      });
+
+      // Handle heartbeats and other messages
+      eventSource.onmessage = (evt) => {
+        if (evt.data.trim() === "") {
+          console.log(`[heartbeat] (empty frame)`);
+          logMessage(`[heartbeat] (empty frame)`);
+        } else {
+          console.log(`[message] ${evt.data}`);
+          logMessage(`[message] ${evt.data}`);
+        }
+      };
+
+      // Handle connection errors
+      eventSource.onerror = (err) => {
+        console.error(`[SSE error] ${err}`);
+        logMessage(`[SSE error] ${err}`);
+      };
+
+      // Helper function to log messages to the UI
+      function logMessage(msg) {
+        const logEl = document.getElementById("log");
+        const line = document.createElement("div");
+        line.textContent = new Date().toISOString() + " " + msg;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+    </script>
+  </body>
+</html>
+```
+
+### Key Features of the Advanced Example:
+
+1. **Client ID Persistence**: The `rig_redis_client_id` is stored in a cookie and reused on reconnection
+2. **Automatic Replay**: When reconnecting with a stored client ID, RIG will replay any messages that were sent while the client was disconnected
+3. **Subscription in URL**: Subscriptions are passed as URL parameters, eliminating the need for a separate subscription request
+4. **Error Handling**: Proper handling of offset errors and connection issues
+5. **Heartbeat Support**: Handles empty frames used for connection keep-alive
+
+### When to Use Client ID Persistence:
+
+- **Use it when**: You need to ensure no messages are lost during temporary disconnections
+- **Don't use it when**: You only want to receive live messages and don't need historical replay
+- **Consider**: Client ID persistence requires server-side storage and may have performance implications for long-running connections
+
+The basic example is sufficient for most use cases, while the advanced example provides additional reliability for applications that cannot afford to miss messages.
