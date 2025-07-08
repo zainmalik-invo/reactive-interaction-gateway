@@ -16,9 +16,7 @@ defmodule RigKafka.ReplayKafkaConsumerTest do
   alias RigCloudEvents.CloudEvent
 
   @test_topic "rig-test-topic"
-  @test_partition 0
-  @test_event_type "com.example.test"
-  @test_constraints [%{"field" => "value"}]
+  @test_partitions [0, 1, 2]
 
   setup do
     # Reset mocks before each test
@@ -28,8 +26,8 @@ defmodule RigKafka.ReplayKafkaConsumerTest do
       assert length(subscriptions) == 1
       [subscription] = subscriptions
       assert %Subscription{} = subscription
-      assert subscription.event_type == @test_event_type
-      assert subscription.constraints == @test_constraints
+      assert is_binary(subscription.event_type)
+      assert is_list(subscription.constraints)
       assert subscription.start_offset == nil
       assert is_list(prev_subscriptions)
       assert is_function(done_callback) or is_nil(done_callback)
@@ -40,23 +38,36 @@ defmodule RigKafka.ReplayKafkaConsumerTest do
   end
 
   describe "start_link/1" do
-    test "starts the consumer with valid parameters" do
+    test "starts the consumer with valid parameters for multiple partitions and dynamic event types/constraints" do
+      Process.flag(:trap_exit, true)
       test_pid = self()
 
-      assert {:ok, pid} =
-               ReplayKafkaConsumer.start_link(%{
-                 conn_pid: test_pid,
-                 event_type: @test_event_type,
-                 constraints: @test_constraints,
-                 start_offset: 100,
-                 partition: @test_partition
-               })
+      event_types = ["com.example.test", "com.example.other", "com.example.dynamic"]
+      constraints_list = [
+        [%{"field" => "value"}],
+        [%{"field" => "other"}],
+        [%{"field" => "dynamic"}]
+      ]
 
-      assert is_pid(pid)
-      assert Process.alive?(pid)
+      Enum.each(@test_partitions, fn partition ->
+        Enum.zip(event_types, constraints_list)
+        |> Enum.each(fn {event_type, constraints} ->
+          assert {:ok, pid} =
+                   ReplayKafkaConsumer.start_link(%{
+                     conn_pid: test_pid,
+                     event_type: event_type,
+                     constraints: constraints,
+                     start_offset: 100,
+                     partition: partition
+                   })
 
-      # Clean up
-      Process.exit(pid, :kill)
+          assert is_pid(pid)
+          assert Process.alive?(pid)
+
+          # Clean up
+          Process.exit(pid, :kill)
+        end)
+      end)
     end
 
     test "requires all mandatory parameters" do
@@ -67,81 +78,103 @@ defmodule RigKafka.ReplayKafkaConsumerTest do
       assert_raise FunctionClauseError, fn ->
         ReplayKafkaConsumer.start_link(%{
           conn_pid: self(),
-          event_type: @test_event_type
+          event_type: "com.example.test"
         })
       end
     end
   end
 
   describe "CloudEvent processing" do
-    test "enriches CloudEvent with Kafka metadata" do
-      # Test the enrichment logic by creating a mock CloudEvent
-      cloud_event = %Cloudevents.Format.V_0_2.Event{
-        specversion: "0.2",
-        type: @test_event_type,
-        source: "/test",
-        id: "test-id",
-        data: %{"field" => "value"},
-        contenttype: "application/json",
-        extensions: %{},
-        schemaurl: nil,
-        time: nil
-      }
+    test "enriches CloudEvent with Kafka metadata for multiple partitions and dynamic event types/constraints" do
+      event_types = ["com.example.test", "com.example.other", "com.example.dynamic"]
+      constraints_list = [
+        [%{"field" => "value"}],
+        [%{"field" => "other"}],
+        [%{"field" => "dynamic"}]
+      ]
 
-      topic = @test_topic
-      offset = 100
-      partition = @test_partition
+      Enum.each(@test_partitions, fn partition ->
+        Enum.zip(event_types, constraints_list)
+        |> Enum.each(fn {event_type, constraints} ->
+          # Test the enrichment logic by creating a mock CloudEvent
+          cloud_event = %Cloudevents.Format.V_0_2.Event{
+            specversion: "0.2",
+            type: event_type,
+            source: "/test",
+            id: "test-id",
+            data: List.first(constraints),
+            contenttype: "application/json",
+            extensions: %{},
+            schemaurl: nil,
+            time: nil
+          }
 
-      # Simulate the enrichment logic from the ReplayKafkaConsumer
-      enriched =
-        cloud_event
-        |> Map.put("topic", topic)
-        |> Map.put(
-          :extensions,
-          Map.merge(cloud_event.extensions, %{
-            "x-kafka-offset" => offset,
-            "x-kafka-partition" => partition
-          })
-        )
+          topic = @test_topic
+          offset = 100
 
-      assert Map.get(enriched, "topic") == topic
-      assert enriched.extensions["x-kafka-offset"] == offset
-      assert enriched.extensions["x-kafka-partition"] == partition
-      assert enriched.type == @test_event_type
-      assert enriched.data["field"] == "value"
+          # Simulate the enrichment logic from the ReplayKafkaConsumer
+          enriched =
+            cloud_event
+            |> Map.put("topic", topic)
+            |> Map.put(
+              :extensions,
+              Map.merge(cloud_event.extensions, %{
+                "x-kafka-offset" => offset,
+                "x-kafka-partition" => partition
+              })
+            )
+
+          assert Map.get(enriched, "topic") == topic
+          assert enriched.extensions["x-kafka-offset"] == offset
+          assert enriched.extensions["x-kafka-partition"] == partition
+          assert enriched.type == event_type
+          assert enriched.data["field"] == List.first(constraints)["field"]
+        end)
+      end)
     end
 
-    test "handles CloudEvent with existing extensions" do
-      cloud_event = %Cloudevents.Format.V_0_2.Event{
-        specversion: "0.2",
-        type: @test_event_type,
-        source: "/test",
-        id: "test-id",
-        data: %{"field" => "value"},
-        contenttype: "application/json",
-        extensions: %{"existing_key" => "existing_value"},
-        schemaurl: nil,
-        time: nil
-      }
+    test "handles CloudEvent with existing extensions for multiple partitions and dynamic event types/constraints" do
+      event_types = ["com.example.test", "com.example.other", "com.example.dynamic"]
+      constraints_list = [
+        [%{"field" => "value"}],
+        [%{"field" => "other"}],
+        [%{"field" => "dynamic"}]
+      ]
 
-      topic = @test_topic
-      offset = 100
-      partition = @test_partition
+      Enum.each(@test_partitions, fn partition ->
+        Enum.zip(event_types, constraints_list)
+        |> Enum.each(fn {event_type, constraints} ->
+          cloud_event = %Cloudevents.Format.V_0_2.Event{
+            specversion: "0.2",
+            type: event_type,
+            source: "/test",
+            id: "test-id",
+            data: List.first(constraints),
+            contenttype: "application/json",
+            extensions: %{"existing_key" => "existing_value"},
+            schemaurl: nil,
+            time: nil
+          }
 
-      enriched =
-        cloud_event
-        |> Map.put("topic", topic)
-        |> Map.put(
-          :extensions,
-          Map.merge(cloud_event.extensions, %{
-            "x-kafka-offset" => offset,
-            "x-kafka-partition" => partition
-          })
-        )
+          topic = @test_topic
+          offset = 100
 
-      assert enriched.extensions["existing_key"] == "existing_value"
-      assert enriched.extensions["x-kafka-offset"] == offset
-      assert enriched.extensions["x-kafka-partition"] == partition
+          enriched =
+            cloud_event
+            |> Map.put("topic", topic)
+            |> Map.put(
+              :extensions,
+              Map.merge(cloud_event.extensions, %{
+                "x-kafka-offset" => offset,
+                "x-kafka-partition" => partition
+              })
+            )
+
+          assert enriched.extensions["existing_key"] == "existing_value"
+          assert enriched.extensions["x-kafka-offset"] == offset
+          assert enriched.extensions["x-kafka-partition"] == partition
+        end)
+      end)
     end
   end
 
@@ -336,6 +369,27 @@ defmodule RigKafka.ReplayKafkaConsumerTest do
       assert is_atom(client_id)
       assert Atom.to_string(client_id) =~ "replay_consumer_"
       assert Atom.to_string(client_id) =~ inspect(conn_pid)
+    end
+  end
+
+  describe "message assignment to partitions" do
+    test "partitioning logic: unique keys are distributed across 3 partitions" do
+      n_partitions = 3
+      keys = ["key-1", "key-2", "key-3", "key-4", "key-5", "key-6"]
+
+      # Use the same Murmur hash logic as in RigKafka.Client
+      partitions =
+        keys
+        |> Enum.map(fn key ->
+          partition =
+            Murmur.hash_x86_32(key)
+            |> abs()
+            |> rem(n_partitions)
+          {key, partition}
+        end)
+
+      unique_partitions = partitions |> Enum.map(fn {_k, p} -> p end) |> Enum.uniq()
+      assert length(unique_partitions) >= 3
     end
   end
 

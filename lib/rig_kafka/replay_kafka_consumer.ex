@@ -8,12 +8,11 @@ defmodule RigKafka.ReplayKafkaConsumer do
   require Logger
 
   alias Rig.EventFilter
-  alias RigCloudEvents.CloudEvent
   alias Rig.Subscription
+  alias RigCloudEvents.CloudEvent
   alias UUID
 
   @default_topic Application.get_env(:rig, :kafka_topic, "rig")
-  @default_partition 0
 
   @type t :: %{
           conn_pid: pid(),
