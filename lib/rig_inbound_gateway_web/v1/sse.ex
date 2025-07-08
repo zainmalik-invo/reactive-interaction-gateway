@@ -80,7 +80,7 @@ defmodule RigInboundGatewayWeb.V1.SSE do
 
       # Fetch stored offsets from Redis using client_id
       case Rig.Redis.get_client_offset_info(request.client_id) do
-        {:ok, offset_info} when length(offset_info) > 0 ->
+        {:ok, offset_info} when offset_info != [] ->
           Logger.info(
             "Found stored offsets for client #{request.client_id}: #{inspect(offset_info)}"
           )
@@ -210,13 +210,14 @@ defmodule RigInboundGatewayWeb.V1.SSE do
 
     {:ok, offset_info} = Rig.Redis.get_client_offset_info(client_id)
 
+    # Build a map of {{event_type, partition} => offset}
     stored_offsets =
-      Enum.into(offset_info, %{}, fn %{
-                                       event_type: event_type,
-                                       offset: offset,
-                                       partition: partition
-                                     } ->
-        {event_type, %{offset: offset, partition: partition}}
+      Enum.reduce(offset_info, %{}, fn %{
+                                         event_type: event_type,
+                                         offset: offset,
+                                         partition: partition
+                                       }, acc ->
+        Map.put(acc, {event_type, partition}, offset)
       end)
 
     Enum.each(subscriptions, fn %Rig.Subscription{
@@ -224,28 +225,31 @@ defmodule RigInboundGatewayWeb.V1.SSE do
                                   constraints: constraints,
                                   start_offset: offset
                                 } ->
-      {effective_offset, effective_partition} =
-        case {offset, Map.get(stored_offsets, et)} do
-          {nil, %{offset: stored_offset, partition: stored_partition}}
-          when is_integer(stored_offset) ->
-            {stored_offset, stored_partition}
+      # Find all partitions for this event_type
+      partitions_for_type =
+        stored_offsets
+        |> Enum.filter(fn {{event_type, _partition}, _offset} -> event_type == et end)
 
-          {client_offset, _} when is_integer(client_offset) ->
-            {client_offset, 0}
+      if partitions_for_type != [] do
+        Enum.each(partitions_for_type, fn {{_event_type, partition}, stored_offset} ->
+          effective_offset =
+            case offset do
+              nil -> stored_offset + 1
+              client_offset when is_integer(client_offset) -> client_offset + 1
+              _ -> nil
+            end
 
-          _ ->
-            {nil, 0}
-        end
-
-      if effective_offset != nil do
-        {:ok, _pid} =
-          RigKafka.ReplayKafkaConsumer.start_link(%{
-            conn_pid: self(),
-            event_type: et,
-            constraints: constraints,
-            start_offset: effective_offset,
-            partition: effective_partition
-          })
+          if effective_offset != nil do
+            {:ok, _pid} =
+              RigKafka.ReplayKafkaConsumer.start_link(%{
+                conn_pid: self(),
+                event_type: et,
+                constraints: constraints,
+                start_offset: effective_offset,
+                partition: partition
+              })
+          end
+        end)
       else
         live_sub = %Rig.Subscription{
           event_type: et,
