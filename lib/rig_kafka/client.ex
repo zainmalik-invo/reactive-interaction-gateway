@@ -64,10 +64,8 @@ defmodule RigKafka.Client do
         ] ++ headers
 
       try do
-        # Directly invoke callback with raw_body (JSON string) and partition_offeset_headers.
-        # We do NOT decode JSON here. The callback (KafkaToFilter.kafka_handler/2)
-        # expects raw payload + headers so it can run Cloudevents.from_kafka_message/2 itself.
-        case callback.(raw_body, partition_offeset_headers) do
+        # Pass topic to callback (KafkaToFilter.kafka_handler/3)
+        case callback.(topic, raw_body, partition_offeset_headers) do
           :ok ->
             # Update Prometheus metric
             EventsMetrics.measure_event_processing(

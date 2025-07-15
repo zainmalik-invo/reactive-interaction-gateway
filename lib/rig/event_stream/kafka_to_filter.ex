@@ -18,7 +18,7 @@ defmodule Rig.EventStream.KafkaToFilter do
 
   # ---
 
-  def kafka_handler(body, headers) do
+  def kafka_handler(topic, body, headers) do
     case Cloudevents.from_kafka_message(body, headers) do
       {:ok, cloud_event} ->
         Tracing.CloudEvent.with_child_span "kafka_to_filter", cloud_event do
@@ -29,6 +29,7 @@ defmodule Rig.EventStream.KafkaToFilter do
               "x-kafka-partition" => get_value_from_headers(headers, "x-kafka-partition"),
               "x-kafka-offset" => get_value_from_headers(headers, "x-kafka-offset")
             })
+            |> Map.put("topic", topic)
 
           Logger.debug(fn -> inspect(cloud_event) end)
           EventFilter.forward_event(cloud_event)

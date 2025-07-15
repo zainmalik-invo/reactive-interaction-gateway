@@ -27,13 +27,16 @@ defmodule RigKafka.ReplayKafkaConsumer do
   # ──────────────────────────────────────────────────────────────────────────────
   def start_link(%{
         conn_pid: conn_pid,
+        topic: topic,
         event_type: event_type,
         constraints: constraints,
         start_offset: start_offset,
         partition: partition
       }) do
+    IO.inspect({:start_link, topic, event_type, partition, start_offset}, label: "ReplayKafkaConsumer.start_link/1")
     initial_state = %{
       conn_pid: conn_pid,
+      topic: topic,
       event_type: event_type,
       constraints: constraints,
       current_offset: start_offset,
@@ -57,6 +60,7 @@ defmodule RigKafka.ReplayKafkaConsumer do
         :begin_replay,
         %{
           conn_pid: conn_pid,
+          topic: topic,
           event_type: event_type,
           constraints: constraints,
           current_offset: offset,
@@ -94,11 +98,13 @@ defmodule RigKafka.ReplayKafkaConsumer do
         # ────────────────────────────────────────────────────────────────────────────
         # 4) Look up the head (latest) offset for this topic/partition
         # ────────────────────────────────────────────────────────────────────────────
-        Logger.debug("Resolving latest offset for topic #{@default_topic}")
+        Logger.debug("Resolving latest offset for topic #{topic}")
+        IO.inspect({:resolve_offset, topic, partition}, label: "ReplayKafkaConsumer.handle_info/2")
 
-        case :brod.resolve_offset(brokers, @default_topic, partition, :latest) do
+        case :brod.resolve_offset(brokers, topic, partition, :latest) do
           {:ok, head_offset} ->
             Logger.debug("Successfully resolved head offset: #{head_offset}")
+            IO.inspect({:replay_loop, topic, partition, offset, head_offset}, label: "ReplayKafkaConsumer.handle_info/2")
 
             # ────────────────────────────────────────────────────────────────────────
             # 5) Replay loop from requested `offset` → `head_offset`.
@@ -107,7 +113,7 @@ defmodule RigKafka.ReplayKafkaConsumer do
             do_replay_loop(
               # << pass the client‐ID atom, not the PID >>
               client_id,
-              @default_topic,
+              topic,
               partition,
               offset,
               head_offset,

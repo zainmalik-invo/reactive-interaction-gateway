@@ -13,10 +13,12 @@ defmodule Rig.Redis do
   end
 
   @doc """
-  Store Kafka offset for a client_id, event_type, and partition
+  Store Kafka offset for a client_id, topic, event_type, and partition
   """
-  def store_offset(client_id, event_type, partition, offset) do
+  def store_offset(client_id, topic, event_type, partition, offset) do
     hash_key = "rig:offsets:#{client_id}"
+
+    IO.inspect({:store_offset, client_id, topic, event_type, partition, offset}, label: "Rig.Redis.store_offset/6")
 
     # Convert partition and offset to integers if they're strings
     partition_int =
@@ -50,17 +52,21 @@ defmodule Rig.Redis do
       end
 
     # Use the converted partition_int in the field key
-    field = "#{event_type}:#{partition_int}"
+    field = "#{topic}:#{event_type}:#{partition_int}"
+
+    IO.inspect({:hset, hash_key, field, offset_int}, label: "Rig.Redis.store_offset/6 HSET")
 
     GenServer.call(__MODULE__, {:hset, hash_key, field, to_string(offset_int)})
   end
 
   @doc """
-  Get Kafka offset for a client_id, event_type, and partition
+  Get Kafka offset for a client_id, topic, event_type, and partition
   """
-  def get_offset(client_id, event_type, partition) do
+  def get_offset(client_id, topic, event_type, partition) do
     hash_key = "rig:offsets:#{client_id}"
-    field = "#{event_type}:#{partition}"
+    field = "#{topic}:#{event_type}:#{partition}"
+
+    IO.inspect({:get_offset, client_id, topic, event_type, partition}, label: "Rig.Redis.get_offset/5")
 
     case GenServer.call(__MODULE__, {:hget, hash_key, field}) do
       {:ok, nil} ->
@@ -81,14 +87,16 @@ defmodule Rig.Redis do
   end
 
   @doc """
-  Get all offsets for a client_id
+  Get all offsets for a client_id (returns a list of %{topic, event_type, partition, offset})
   """
   def get_all_offsets(client_id) do
     hash_key = "rig:offsets:#{client_id}"
 
+    IO.inspect({:get_all_offsets, client_id}, label: "Rig.Redis.get_all_offsets/1")
+
     case GenServer.call(__MODULE__, {:hgetall, hash_key}) do
       {:ok, []} ->
-        {:ok, %{}}
+        {:ok, []}
 
       {:ok, fields} ->
         offsets =
@@ -100,10 +108,15 @@ defmodule Rig.Redis do
           end)
           |> Enum.map(fn [key, value] ->
             case String.split(key, ":") do
-              [event_type, partition] when event_type != "" and partition != "" ->
+              [topic, event_type, partition] when topic != "" and event_type != "" and partition != "" ->
                 case {Integer.parse(partition), Integer.parse(value)} do
                   {{partition_int, ""}, {offset_int, ""}} ->
-                    {event_type, {partition_int, offset_int}}
+                    %{
+                      topic: topic,
+                      event_type: event_type,
+                      partition: partition_int,
+                      offset: offset_int
+                    }
 
                   _ ->
                     nil
@@ -114,18 +127,8 @@ defmodule Rig.Redis do
             end
           end)
           |> Enum.filter(&(&1 != nil))
-          |> Enum.group_by(fn {event_type, _} -> event_type end, fn {_event_type,
-                                                                     {partition, offset}} ->
-            {partition, offset}
-          end)
-          |> Map.new(fn {event_type, partition_offsets} ->
-            # Get the highest offset for this event_type
-            {_partition, highest_offset} =
-              Enum.max_by(partition_offsets, fn {_partition, offset} -> offset end)
 
-            {event_type, highest_offset}
-          end)
-
+        IO.inspect(offsets, label: "Rig.Redis.get_all_offsets/1 result")
         {:ok, offsets}
 
       {:error, reason} ->
@@ -142,17 +145,18 @@ defmodule Rig.Redis do
   end
 
   @doc """
-  Get all offsets for a client_id and event_type (returns %{partition => offset})
+  Get all offsets for a client_id, topic, and event_type (returns %{partition => offset})
   """
-  def get_offsets_for_event_type(client_id, event_type) do
+  def get_offsets_for_event_type(client_id, topic, event_type) do
     case get_all_offsets(client_id) do
       {:ok, offsets} ->
         filtered =
           offsets
-          |> Enum.filter(fn {{et, _partition}, _offset} -> et == event_type end)
-          |> Enum.map(fn {{_et, partition}, offset} -> {partition, offset} end)
+          |> Enum.filter(fn %{topic: t, event_type: et} -> t == topic and et == event_type end)
+          |> Enum.map(fn %{partition: partition, offset: offset} -> {partition, offset} end)
           |> Map.new()
 
+        IO.inspect(filtered, label: "Rig.Redis.get_offsets_for_event_type/3 result")
         {:ok, filtered}
 
       error ->
@@ -161,11 +165,13 @@ defmodule Rig.Redis do
   end
 
   @doc """
-  Get all offset information (event_type, partition, offset) for a client_id
-  Returns a list of maps with event_type, partition, and offset
+  Get all offset information (topic, event_type, partition, offset) for a client_id
+  Returns a list of maps with topic, event_type, partition, and offset
   """
   def get_client_offset_info(client_id) do
     hash_key = "rig:offsets:#{client_id}"
+
+    IO.inspect({:get_client_offset_info, client_id}, label: "Rig.Redis.get_client_offset_info/1")
 
     case GenServer.call(__MODULE__, {:hgetall, hash_key}) do
       {:ok, []} ->
@@ -181,10 +187,11 @@ defmodule Rig.Redis do
           end)
           |> Enum.map(fn [key, value] ->
             case String.split(key, ":") do
-              [event_type, partition] when event_type != "" and partition != "" ->
+              [topic, event_type, partition] when topic != "" and event_type != "" and partition != "" ->
                 case {Integer.parse(partition), Integer.parse(value)} do
                   {{partition_int, ""}, {offset_int, ""}} ->
                     %{
+                      topic: topic,
                       event_type: event_type,
                       partition: partition_int,
                       offset: offset_int
@@ -200,6 +207,7 @@ defmodule Rig.Redis do
           end)
           |> Enum.filter(&(&1 != nil))
 
+        IO.inspect(offset_info, label: "Rig.Redis.get_client_offset_info/1 result")
         {:ok, offset_info}
 
       {:error, reason} ->

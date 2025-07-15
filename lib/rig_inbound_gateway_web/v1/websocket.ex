@@ -133,9 +133,17 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
     if event.extensions != %{} do
       partition = Map.get(event.extensions, "x-kafka-partition")
       offset = Map.get(event.extensions, "x-kafka-offset")
+      topic =
+        cond do
+          Map.has_key?(event, :topic) -> Map.get(event, :topic)
+          Map.has_key?(event, "topic") -> Map.get(event, "topic")
+          true -> "rig"
+        end
 
+      IO.inspect({:store_offset, state.client_id, topic, event.type, partition, offset}, label: "WS.store_offset")
       Rig.Redis.store_offset(
         state.client_id,
+        topic,
         event.type,
         partition,
         offset
@@ -156,29 +164,33 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
 
     # Fetch current offsets before processing new subscriptions
     {:ok, offset_info} = Rig.Redis.get_client_offset_info(state.client_id)
+    IO.inspect(offset_info, label: "WS.set_subscriptions offset_info")
 
-    # Build a map of {{event_type, partition} => offset}
+    # Build a map of {{topic, event_type, partition} => offset}
     stored_offsets =
       Enum.reduce(offset_info, %{}, fn %{
+                                         topic: topic,
                                          event_type: event_type,
                                          offset: offset,
                                          partition: partition
                                        }, acc ->
-        Map.put(acc, {event_type, partition}, offset)
+        Map.put(acc, {topic, event_type, partition}, offset)
       end)
+
+    IO.inspect(stored_offsets, label: "WS.set_subscriptions stored_offsets")
 
     Enum.each(subscriptions, fn %Rig.Subscription{
                                   event_type: et,
                                   constraints: constraints,
                                   start_offset: offset
                                 } ->
-      # Find all partitions for this event_type
+      # Find all (topic, partition) for this event_type
       partitions_for_type =
         stored_offsets
-        |> Enum.filter(fn {{event_type, _partition}, _offset} -> event_type == et end)
+        |> Enum.filter(fn {{topic, event_type, _partition}, _offset} -> event_type == et end)
 
       if partitions_for_type != [] do
-        Enum.each(partitions_for_type, fn {{_event_type, partition}, stored_offset} ->
+        Enum.each(partitions_for_type, fn {{topic, _event_type, partition}, stored_offset} ->
           effective_offset =
             case offset do
               nil -> stored_offset + 1
@@ -187,9 +199,11 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
             end
 
           if effective_offset != nil do
+            IO.inspect({:replay_consumer, topic, et, partition, effective_offset}, label: "WS.set_subscriptions starting replay")
             {:ok, _pid} =
               RigKafka.ReplayKafkaConsumer.start_link(%{
                 conn_pid: self(),
+                topic: topic,
                 event_type: et,
                 constraints: constraints,
                 start_offset: effective_offset,
