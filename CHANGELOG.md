@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **How it works:**
 
   - Client ID is automatically stored in browser cookies when establishing SSE connections
-  - On reconnection, the stored client ID is sent to RIG via the `rig_redis_client_id` parameter
+  - On reconnection, the stored client ID is sent to RIG via the `replay_token` parameter
   - RIG uses Redis to track the last processed offset for each client ID and event type
   - When reconnecting, RIG replays events from the last known offset to the current head
 
@@ -29,14 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - **Offset Tracking**: Redis stores Kafka offsets per client ID, event type, and partition using hash keys like `rig:offsets:{client_id}`
   - **Disconnection Detection**: When clients disconnect, RIG continues processing events and updating offsets in Redis
-  - **Reconnection Recovery**: On reconnection with `rig_redis_client_id`, RIG queries Redis for the last known offsets
+  - **Reconnection Recovery**: On reconnection with `replay_token`, RIG queries Redis for the last known offsets
   - **Event Replay**: RIG creates a one-shot Kafka consumer to replay events from the stored offset to the current head
   - **Message Deduplication**: Events are filtered to ensure clients don't receive duplicate messages during replay
 
   **Usage:**
 
   - Basic connections work as before (no changes required)
-  - For replay functionality, include `rig_redis_client_id` parameter in SSE URL
+  - For replay functionality, include `replay_token` parameter in SSE URL
   - Client ID is automatically managed via browser cookies in the provided examples
   - Redis must be configured and running for offset persistence to work
 
@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   - Redis connection settings in `config.exs` under `Rig.Redis` section
   - Environment variables: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_SOCKET_TIMEOUT`, `REDIS_SOCKET_CONNECT_TIMEOUT`, `REDIS_SSL`
-  - Client ID cookie name: `rig_redis_client_id` (configurable in client code)
+  - Client ID cookie name: `replay_token` (configurable in client code)
 
   See the [tutorial documentation](docs/tutorial.md) for implementation examples.
 

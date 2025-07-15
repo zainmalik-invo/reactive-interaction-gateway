@@ -105,7 +105,7 @@
          */
         const jwt =
           "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiZnVsbG5hbWUiOiJKb2huIERvZSIsInVzZXJuYW1lIjoiam9obi5kb2UiLCJpYXQiOjQxMDMyNTgxNDMsImV4cCI6NDEwMzI1ODE0M30.3ziftuo1JbXed7XSFJTcrdzOewSu7Jos9Vljk9dOTYI";
-        const connectionToken = localStorage.getItem("connection_token");
+        const connectionToken = localStorage.getItem("replay_token");
         console.log("Existing connectionToken", connectionToken);
         if (!connectionToken) {
           console.error("Missing connectionToken > can't do subscriptions");
@@ -157,8 +157,8 @@
                 if (event.type === "rig.connection.create") {
                   console.log("Connection created:", event);
                   localStorage.setItem(
-                    "connection_token",
-                    event.data.connection_token
+                    "replay_token",
+                    event.data.replay_token
                   );
                   // re-subscribe when connection is new
                   createSubscription();

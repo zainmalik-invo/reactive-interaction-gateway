@@ -12,9 +12,9 @@ defmodule RigInboundGateway.Events do
 
   @spec welcome_event(pid | nil, String.t() | nil) :: CloudEvent.t()
   def welcome_event(pid \\ self(), client_id \\ nil) do
-    connection_token = Connection.Codec.serialize(pid)
+    replay_token = Connection.Codec.serialize(pid)
 
-    data = %{connection_token: connection_token}
+    data = %{replay_token: replay_token}
     data = if client_id, do: Map.put(data, :client_id, client_id), else: data
 
     rig_event(

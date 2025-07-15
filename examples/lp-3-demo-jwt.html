@@ -87,7 +87,7 @@
 
       function createSubscription() {
         const eventType = "greeting.simple";
-        const connectionToken = localStorage.getItem("connection_token");
+        const connectionToken = localStorage.getItem("replay_token");
         console.log("Existing connectionToken", connectionToken);
         if (!connectionToken) {
           console.error("Missing connectionToken > can't do subscriptions");
@@ -134,8 +134,8 @@
                 if (event.type === "rig.connection.create") {
                   console.log("Connection created:", event);
                   localStorage.setItem(
-                    "connection_token",
-                    event.data.connection_token
+                    "replay_token",
+                    event.data.replay_token
                   );
                   // re-subscribe when connection is new
                   createSubscription();

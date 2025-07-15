@@ -28,21 +28,21 @@ defmodule RigInboundGatewayWeb.V1.LongpollingController do
   @doc false
   def handle_connection(%{method: "GET"} = conn, _params) do
     conn = conn |> fetch_cookies |> fetch_query_params
-    conn.req_cookies["connection_token"] |> is_new_session? |> process_request(conn)
+    conn.req_cookies["replay_token"] |> is_new_session? |> process_request(conn)
   end
 
   # -----
   # Helpers
   # -----
 
-  # validates if a connection_token was given.
+  # validates if a replay_token was given.
   # If yes, it validates if corresponding session processes are still alive
   # ignoring invalid/timed out cookies
-  defp is_new_session?(connection_token)
+  defp is_new_session?(replay_token)
   defp is_new_session?(nil), do: true
 
-  defp is_new_session?(connection_token) do
-    case Connection.Codec.deserialize(connection_token) do
+  defp is_new_session?(replay_token) do
+    case Connection.Codec.deserialize(replay_token) do
       {:ok, session_pid} -> !Process.alive?(session_pid)
       _ -> false
     end
@@ -64,7 +64,7 @@ defmodule RigInboundGatewayWeb.V1.LongpollingController do
 
       conn
       |> with_allow_origin()
-      |> put_resp_cookie("connection_token", session_pid |> Connection.Codec.serialize())
+      |> put_resp_cookie("replay_token", session_pid |> Connection.Codec.serialize())
       |> put_resp_cookie("last_event_id", Jason.encode!("first_event"))
       |> put_resp_header("cache-control", "no-cache")
       |> put_status(200)
@@ -100,7 +100,7 @@ defmodule RigInboundGatewayWeb.V1.LongpollingController do
 
   # reconnect to existing session
   defp process_request(false, conn) do
-    {:ok, session_pid} = Connection.Codec.deserialize(conn.req_cookies["connection_token"])
+    {:ok, session_pid} = Connection.Codec.deserialize(conn.req_cookies["replay_token"])
 
     response =
       Session.recv_events(
@@ -110,7 +110,7 @@ defmodule RigInboundGatewayWeb.V1.LongpollingController do
 
     conn
     |> with_allow_origin()
-    |> put_resp_cookie("connection_token", session_pid |> Connection.Codec.serialize())
+    |> put_resp_cookie("replay_token", session_pid |> Connection.Codec.serialize())
     |> put_resp_cookie(
       "last_event_id",
       Jason.encode!(response[:last_event_id] || "first_event")

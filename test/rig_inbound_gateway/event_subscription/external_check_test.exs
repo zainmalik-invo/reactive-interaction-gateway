@@ -42,7 +42,7 @@ defmodule RigInboundGateway.EventSubscription.ExternalCheckTest do
   end
 
   defp connection_id(welcome_event)
-  defp connection_id(%{"data" => %{"connection_token" => connection_id}}), do: connection_id
+  defp connection_id(%{"data" => %{"replay_token" => connection_id}}), do: connection_id
 
   defp update_subscriptions(connection_id, subscriptions, jwt \\ nil) do
     url =

@@ -39,7 +39,7 @@ content-type: text/event-stream
 transfer-encoding: chunked
 
 event: rig.connection.create
-data: {"data":{"connection_token":"g2dkAA1yaWdAMTI3LjAuMC4xAAAKNwAAAAAD","errors":[]},"id":"634b8420-010f-4430-870b-fb5ca8e02945","source":"rig","specversion":"0.2","time":"2019-03-27T11:53:18.435690+00:00","type":"rig.connection.create"}
+data: {"data":{"replay_token":"g2dkAA1yaWdAMTI3LjAuMC4xAAAKNwAAAAAD","errors":[]},"id":"634b8420-010f-4430-870b-fb5ca8e02945","source":"rig","specversion":"0.2","time":"2019-03-27T11:53:18.435690+00:00","type":"rig.connection.create"}
 
 event: rig.subscriptions_set
 data: {"data":[{"eventType":"greeting","oneOf":[]}],"id":"ec4deb26-d2a7-46ed-806d-d1beaa2560f8","source":"rig","specversion":"0.2","time":"2019-03-27T11:53:18.438281+00:00","type":"rig.subscriptions_set"}
@@ -50,7 +50,7 @@ Note that the `rig.subscriptions_set` event includes the passed subscription.
 
 > **Subscriptions might not be effective immediately! Wait for the `rig.subscriptions_set` event if you need to know when they are ready.**
 
-Note that the `rig.connection.create` event includes a `connection_token`; this token can now be used to update the subscriptions after the connection has been established. Let's replace our initial subscription to "greeting" with a new one to "greeting2":
+Note that the `rig.connection.create` event includes a `replay_token`; this token can now be used to update the subscriptions after the connection has been established. Let's replace our initial subscription to "greeting" with a new one to "greeting2":
 
 ```bash
 $ CONN_TOKEN=g2dkAA1yaWdAMTI3LjAuMC4xAAAKTAAAAAAD

@@ -18,7 +18,7 @@ export class Ws {
       const cloudEvent = JSON.parse(e.data);
       if (cloudEvent.type === 'rig.connection.create') {
         const payload = cloudEvent.data;
-        const connectionToken = payload['connection_token'];
+        const connectionToken = payload['replay_token'];
         // we don't want to subscribe to inferred event, otherwise we get 2 subscriptions
         if (subscriberEvent !== 'message') {
           this.createSubscription(connectionToken, subscriberEvent, token);

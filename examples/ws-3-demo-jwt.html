@@ -103,7 +103,7 @@
       const cloudEvent = JSON.parse(e.data)
       if (cloudEvent.type === 'rig.connection.create') {
         payload = cloudEvent.data
-        connectionToken = payload["connection_token"]
+        connectionToken = payload["replay_token"]
         createSubscription(connectionToken)
       } else if (cloudEvent.eventType === 'greeting.simple') {
         addEvent(cloudEvent)

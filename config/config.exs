@@ -28,7 +28,7 @@ config :rig, Rig.EventStream.KafkaToFilter,
   serializer: {:system, "KAFKA_SERIALIZER", nil},
   schema_registry_host: {:system, "KAFKA_SCHEMA_REGISTRY_HOST", nil},
   # The list of topics to consume messages from:
-  consumer_topics: {:system, :list, "KAFKA_SOURCE_TOPICS", ["rig"]},
+  consumer_topics: {:system, :list, "KAFKA_SOURCE_TOPICS", ["rig", "rig_v8"]},
   # If KAFKA_SSL_ENABLED=0, the KAFKA_SSL_* settings are ignored; otherwise, they're required.
   ssl_enabled?: {:system, :boolean, "KAFKA_SSL_ENABLED", false},
   # If use_enabled?, the following paths are expected (relative to the `priv` directory):
@@ -61,6 +61,9 @@ config :rig, Rig.Redis,
   socket_timeout: {:system, "REDIS_SOCKET_TIMEOUT", 5000},
   socket_connect_timeout: {:system, "REDIS_SOCKET_CONNECT_TIMEOUT", 5000},
   ssl: {:system, "REDIS_SSL", false}
+
+# MAX_CACHE_TTL = 604800 (7Days in Seconds)
+config :rig, :max_cache_ttl, {:system, :integer, "MAX_CACHE_TTL", 604800}
 
 # --------------------------------------
 # Logger

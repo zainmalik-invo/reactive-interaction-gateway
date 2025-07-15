@@ -20,7 +20,7 @@ export class Sse {
     this.socket.addEventListener('rig.connection.create', e => {
       const cloudEvent = JSON.parse(e.data);
       const payload = cloudEvent.data;
-      const connectionToken = payload['connection_token'];
+      const connectionToken = payload['replay_token'];
       // we don't want to subscribe to inferred event, otherwise we get 2 subscriptions
       if (subscriberEvent !== 'message') {
         this.createSubscription(connectionToken, subscriberEvent, token);

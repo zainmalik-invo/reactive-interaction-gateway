@@ -33,7 +33,7 @@ transfer-encoding: chunked
 ...
 
 event: rig.connection.create
-data: {"specversion":"0.2","source":"rig","type":"rig.connection.create","time":"2018-08-22T10:06:04.730484+00:00","id":"2b0a4f05-9032-4617-8d1e-92d97fb870dd","data":{"connection_token":"g2dkAA1ub25vZGVAbm9ob3N0AAACrAAAAAAA","errors":[]}}
+data: {"specversion":"0.2","source":"rig","type":"rig.connection.create","time":"2018-08-22T10:06:04.730484+00:00","id":"2b0a4f05-9032-4617-8d1e-92d97fb870dd","data":{"replay_token":"g2dkAA1ub25vZGVAbm9ob3N0AAACrAAAAAAA","errors":[]}}
 id: 2b0a4f05-9032-4617-8d1e-92d97fb870dd
 ```
 
@@ -41,7 +41,7 @@ After the connection has been established, RIG sends out a [CloudEvent](https://
 
 > You can see that ID and event type of the outer event (= SSE event) match ID and event type of the inner event (= CloudEvent). The cloud event is serialized to the `data` field.
 
-Please take note of the `connection_token` in the CloudEvent's `data` field - you need it in the next step.
+Please take note of the `replay_token` in the CloudEvent's `data` field - you need it in the next step.
 
 ## 3. Subscribe to a topic [Frontend]
 
@@ -128,7 +128,7 @@ See [**examples/sse-demo.html**](https://github.com/Accenture/reactive-interacti
       source.addEventListener("rig.connection.create", function (e) {
         cloudEvent = JSON.parse(e.data)
         payload = cloudEvent.data
-        connectionToken = payload["connection_token"]
+        connectionToken = payload["replay_token"]
         createSubscription(connectionToken)
       }, false);
 
@@ -206,7 +206,7 @@ For applications that need to handle reconnections and receive missed messages, 
       }
 
       // Check for existing client ID
-      const existingClientId = getCookie("rig_redis_client_id");
+      const existingClientId = getCookie("replay_token");
 
       // Define your subscriptions
       const subscriptions = [
@@ -222,7 +222,7 @@ For applications that need to handle reconnections and receive missed messages, 
       // Build the SSE URL with optional client ID
       let eventSourceUrl = "http://localhost:4000/_rig/v1/connection/sse?";
       if (existingClientId) {
-        eventSourceUrl += `rig_redis_client_id=${existingClientId}&`;
+        eventSourceUrl += `replay_token=${existingClientId}&`;
       }
       eventSourceUrl += `subscriptions=${subscriptionsParam}`;
 
@@ -245,7 +245,7 @@ For applications that need to handle reconnections and receive missed messages, 
 
         if (clientId) {
           // Store the client ID for future reconnections
-          setCookie("rig_redis_client_id", clientId);
+          setCookie("replay_token", clientId);
           console.log(`[rig.connection.create] Client ID stored: ${clientId}`);
           logMessage(`[rig.connection.create] Client ID stored: ${clientId}`);
         }
@@ -308,7 +308,7 @@ For applications that need to handle reconnections and receive missed messages, 
 
 ### Key Features of the Advanced Example:
 
-1. **Client ID Persistence**: The `rig_redis_client_id` is stored in a cookie and reused on reconnection
+1. **Client ID Persistence**: The `replay_token` is stored in a cookie and reused on reconnection
 2. **Automatic Replay**: When reconnecting with a stored client ID, RIG will replay any messages that were sent while the client was disconnected
 3. **Subscription in URL**: Subscriptions are passed as URL parameters, eliminating the need for a separate subscription request
 4. **Error Handling**: Proper handling of offset errors and connection issues

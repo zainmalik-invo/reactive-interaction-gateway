@@ -97,7 +97,7 @@
     source.addEventListener("rig.connection.create", function (e) {
       cloudEvent = JSON.parse(e.data)
       payload = cloudEvent.data
-      connectionToken = payload["connection_token"]
+      connectionToken = payload["replay_token"]
       createSubscription(connectionToken)
     }, false);
 
