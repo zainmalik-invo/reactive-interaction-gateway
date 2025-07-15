@@ -73,7 +73,7 @@ defmodule RigInboundGateway.LongpollingSubscriptionTest do
   end
 
   defp connection_id(welcome_event)
-  defp connection_id(%{"data" => %{"connection_token" => connection_id}}), do: connection_id
+  defp connection_id(%{"data" => %{"replay_token" => connection_id}}), do: connection_id
 
   describe "Connections and subscriptions:" do
     test "Connecting with no parameters causes empty subscription set." do
