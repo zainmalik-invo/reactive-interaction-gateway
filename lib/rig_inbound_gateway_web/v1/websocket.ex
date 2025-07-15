@@ -271,14 +271,14 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
     query_params = :cowboy_req.parse_qs(req)
     query_map = Enum.into(query_params, %{})
 
-    case Map.get(query_map, "rig_redis_client_id") do
+    case Map.get(query_map, "replay_token") do
       nil ->
         # 2. Try to get from cookies
         cookies = :cowboy_req.parse_cookies(req)
 
         case cookies do
           {:ok, cookies_list} when is_list(cookies_list) ->
-            case Enum.find(cookies_list, fn {key, _value} -> key == "rig_redis_client_id" end) do
+            case Enum.find(cookies_list, fn {key, _value} -> key == "replay_token" end) do
               {client_id, _value} -> {client_id, req}
               _ -> create_and_set_client_id(req)
             end
@@ -293,8 +293,8 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
   end
 
   defp create_and_set_client_id(req) do
-    client_id = "rig-redis-#{UUID.uuid4()}-#{System.os_time(:millisecond)}"
-    Logger.info("Creating and setting client_id: #{client_id}")
+    client_id = "replay-token-#{UUID.uuid4()}-#{System.os_time(:millisecond)}"
+    Logger.info("Creating and setting replay_token: #{client_id}")
 
     # Don't set cookie here, we'll set it in setup_connection
     {client_id, req}
