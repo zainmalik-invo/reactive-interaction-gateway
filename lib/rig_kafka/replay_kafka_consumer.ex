@@ -33,7 +33,6 @@ defmodule RigKafka.ReplayKafkaConsumer do
         start_offset: start_offset,
         partition: partition
       }) do
-    IO.inspect({:start_link, topic, event_type, partition, start_offset}, label: "ReplayKafkaConsumer.start_link/1")
     initial_state = %{
       conn_pid: conn_pid,
       topic: topic,
@@ -99,13 +98,9 @@ defmodule RigKafka.ReplayKafkaConsumer do
         # 4) Look up the head (latest) offset for this topic/partition
         # ────────────────────────────────────────────────────────────────────────────
         Logger.debug("Resolving latest offset for topic #{topic}")
-        IO.inspect({:resolve_offset, topic, partition}, label: "ReplayKafkaConsumer.handle_info/2")
-
         case :brod.resolve_offset(brokers, topic, partition, :latest) do
           {:ok, head_offset} ->
             Logger.debug("Successfully resolved head offset: #{head_offset}")
-            IO.inspect({:replay_loop, topic, partition, offset, head_offset}, label: "ReplayKafkaConsumer.handle_info/2")
-
             # ────────────────────────────────────────────────────────────────────────
             # 5) Replay loop from requested `offset` → `head_offset`.
             #    We pass `client_id` (an atom) into fetch itself.

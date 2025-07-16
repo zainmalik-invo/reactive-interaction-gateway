@@ -160,7 +160,6 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
             true -> max_cache_ttl
           end
 
-        IO.inspect({:store_offset, state.client_id, topic, event.type, partition, offset, effective_ttl}, label: "WS.store_offset")
         Rig.Redis.store_offset(
           state.client_id,
           topic,
@@ -186,7 +185,6 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
 
     # Fetch current offsets before processing new subscriptions
     {:ok, offset_info} = Rig.Redis.get_client_offset_info(state.client_id)
-    IO.inspect(offset_info, label: "WS.set_subscriptions offset_info")
 
     # Build a map of {{topic, event_type, partition} => offset}
     stored_offsets =
@@ -198,8 +196,6 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
                                        }, acc ->
         Map.put(acc, {topic, event_type, partition}, offset)
       end)
-
-    IO.inspect(stored_offsets, label: "WS.set_subscriptions stored_offsets")
 
     Enum.each(subscriptions, fn %Rig.Subscription{
                                   event_type: et,
@@ -223,7 +219,6 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
               end
 
             if effective_offset != nil do
-              IO.inspect({:replay_consumer, topic, et, partition, effective_offset}, label: "WS.set_subscriptions starting replay")
               {:ok, _pid} =
                 RigKafka.ReplayKafkaConsumer.start_link(%{
                   conn_pid: self(),

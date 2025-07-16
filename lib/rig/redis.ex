@@ -25,8 +25,6 @@ defmodule Rig.Redis do
   def store_offset(client_id, topic, event_type, partition, offset, ttl) do
     hash_key = "rig:offsets:#{client_id}"
 
-    IO.inspect({:store_offset, client_id, topic, event_type, partition, offset, ttl}, label: "Rig.Redis.store_offset/7")
-
     # Convert partition and offset to integers if they're strings
     partition_int =
       case partition do
@@ -61,8 +59,6 @@ defmodule Rig.Redis do
     # Use the converted partition_int in the field key
     field = "#{topic}:#{event_type}:#{partition_int}"
 
-    IO.inspect({:hset, hash_key, field, offset_int, ttl}, label: "Rig.Redis.store_offset/7 HSET")
-
     if is_integer(ttl) and ttl > 0 do
       GenServer.call(__MODULE__, {:hset_with_expire, hash_key, field, to_string(offset_int), ttl})
     else
@@ -76,8 +72,6 @@ defmodule Rig.Redis do
   def get_offset(client_id, topic, event_type, partition) do
     hash_key = "rig:offsets:#{client_id}"
     field = "#{topic}:#{event_type}:#{partition}"
-
-    IO.inspect({:get_offset, client_id, topic, event_type, partition}, label: "Rig.Redis.get_offset/5")
 
     case GenServer.call(__MODULE__, {:hget, hash_key, field}) do
       {:ok, nil} ->
@@ -102,8 +96,6 @@ defmodule Rig.Redis do
   """
   def get_all_offsets(client_id) do
     hash_key = "rig:offsets:#{client_id}"
-
-    IO.inspect({:get_all_offsets, client_id}, label: "Rig.Redis.get_all_offsets/1")
 
     case GenServer.call(__MODULE__, {:hgetall, hash_key}) do
       {:ok, []} ->
@@ -139,7 +131,6 @@ defmodule Rig.Redis do
           end)
           |> Enum.filter(&(&1 != nil))
 
-        IO.inspect(offsets, label: "Rig.Redis.get_all_offsets/1 result")
         {:ok, offsets}
 
       {:error, reason} ->
@@ -167,7 +158,6 @@ defmodule Rig.Redis do
           |> Enum.map(fn %{partition: partition, offset: offset} -> {partition, offset} end)
           |> Map.new()
 
-        IO.inspect(filtered, label: "Rig.Redis.get_offsets_for_event_type/3 result")
         {:ok, filtered}
 
       error ->
@@ -181,8 +171,6 @@ defmodule Rig.Redis do
   """
   def get_client_offset_info(client_id) do
     hash_key = "rig:offsets:#{client_id}"
-
-    IO.inspect({:get_client_offset_info, client_id}, label: "Rig.Redis.get_client_offset_info/1")
 
     case GenServer.call(__MODULE__, {:hgetall, hash_key}) do
       {:ok, []} ->
@@ -218,7 +206,6 @@ defmodule Rig.Redis do
           end)
           |> Enum.filter(&(&1 != nil))
 
-        IO.inspect(offset_info, label: "Rig.Redis.get_client_offset_info/1 result")
         {:ok, offset_info}
 
       {:error, reason} ->
@@ -328,8 +315,7 @@ defmodule Rig.Redis do
     result = Redix.command(conn, ["HSET", hash_key, field, value])
     if match?({:ok, _}, result) do
       # Set expiry on the hash key
-      IO.inspect("SET EXPIRE KEY")
-      _ = Redix.command(conn, ["EXPIRE", hash_key, Integer.to_string(ttl)]) |> IO.inspect()
+      _ = Redix.command(conn, ["EXPIRE", hash_key, Integer.to_string(ttl)])
     end
     {:reply, result, state}
   end
