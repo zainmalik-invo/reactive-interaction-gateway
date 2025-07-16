@@ -284,7 +284,21 @@ defmodule Rig.Redis do
   end
 
   defp resolve_config_value(value, _env_var_name, fallback) when is_binary(value) do
-    value
+    cond do
+      is_integer(fallback) ->
+        case Integer.parse(value) do
+          {int, ""} -> int
+          _ -> fallback
+        end
+      is_boolean(fallback) ->
+        case String.downcase(value) do
+          "true" -> true
+          "false" -> false
+          _ -> fallback
+        end
+      true ->
+        value
+    end
   end
 
   defp resolve_config_value(value, _env_var_name, fallback) when is_integer(value) do
