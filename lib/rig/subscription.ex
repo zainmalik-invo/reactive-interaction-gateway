@@ -31,7 +31,8 @@ defmodule Rig.Subscription do
           event_type: String.t(),
           constraints: constraints,
           start_offset: non_neg_integer() | nil,
-          partition: non_neg_integer() | nil
+          partition: non_neg_integer() | nil,
+          enable_replay: boolean()
         }
 
   @derive Jason.Encoder
@@ -39,7 +40,8 @@ defmodule Rig.Subscription do
   defstruct event_type: nil,
             constraints: [],
             start_offset: nil,
-            partition: nil
+            partition: nil,
+            enable_replay: false
 
   defimpl String.Chars do
     alias Rig.Subscription
@@ -56,7 +58,8 @@ defmodule Rig.Subscription do
     params = %{
       event_type: event_type(params),
       constraints: constraints(params),
-      start_offset: start_offset(params)
+      start_offset: start_offset(params),
+      enable_replay: enable_replay(params)
     }
 
     subscription = struct!(__MODULE__, params)
@@ -97,17 +100,30 @@ defmodule Rig.Subscription do
   defp start_offset(%{"startOffset" => start_offset}), do: start_offset
   defp start_offset(_), do: nil
 
+  defp enable_replay(%{enable_replay: val}) when is_boolean(val), do: val
+  defp enable_replay(%{"enable_replay" => val}) when is_boolean(val), do: val
+  defp enable_replay(%{"enableReplay" => val}) when is_boolean(val), do: val
+  defp enable_replay(%{enable_replay: val}) when val in [true, false], do: val
+  defp enable_replay(%{"enable_replay" => val}) when val in [true, false], do: val
+  defp enable_replay(%{"enableReplay" => val}) when val in [true, false], do: val
+  defp enable_replay(_), do: false
+
   # ---
 
   defp validate(%__MODULE__{
          event_type: event_type,
          constraints: constraints,
-         start_offset: start_offset
+         start_offset: start_offset,
+         enable_replay: enable_replay
        }) do
     validate_event_type(event_type)
     validate_constraints(constraints)
     validate_start_offset(start_offset)
+    validate_enable_replay(enable_replay)
   end
+
+  defp validate_enable_replay(val) when is_boolean(val), do: :ok
+  defp validate_enable_replay(_), do: throw({:error, "enable_replay must be a boolean"})
 
   defp validate_start_offset(nil), do: :ok
 

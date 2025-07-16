@@ -187,14 +187,26 @@ defmodule RigInboundGatewayWeb.V1.SSE do
           true -> "rig"
         end
 
-      IO.inspect({:store_offset, client_id, topic, event.type, partition, offset}, label: "SSE.store_offset")
-      Rig.Redis.store_offset(
-        client_id,
-        topic,
-        event.type,
-        partition,
-        offset
-      )
+      # Only store offset if enable_replay is true for this event_type
+      enable_replay? =
+        case state[:subscriptions] do
+          subs when is_list(subs) ->
+            Enum.any?(subs, fn sub ->
+              sub.event_type == event.type and Map.get(sub, :enable_replay, false)
+            end)
+          _ -> false
+        end
+
+      if enable_replay? do
+        IO.inspect({:store_offset, client_id, topic, event.type, partition, offset}, label: "SSE.store_offset")
+        Rig.Redis.store_offset(
+          client_id,
+          topic,
+          event.type,
+          partition,
+          offset
+        )
+      end
     end
 
     # Forward the event to the client:
@@ -235,40 +247,55 @@ defmodule RigInboundGatewayWeb.V1.SSE do
     Enum.each(subscriptions, fn %Rig.Subscription{
                                   event_type: et,
                                   constraints: constraints,
-                                  start_offset: offset
+                                  start_offset: offset,
+                                  enable_replay: enable_replay
                                 } ->
-      # Find all (topic, partition) for this event_type
-      partitions_for_type =
-        stored_offsets
-        |> Enum.filter(fn {{topic, event_type, _partition}, _offset} -> event_type == et end)
+      if enable_replay do
+        # Find all (topic, partition) for this event_type
+        partitions_for_type =
+          stored_offsets
+          |> Enum.filter(fn {{topic, event_type, _partition}, _offset} -> event_type == et end)
 
-      if partitions_for_type != [] do
-        Enum.each(partitions_for_type, fn {{topic, _event_type, partition}, stored_offset} ->
-          effective_offset =
-            case offset do
-              nil -> stored_offset + 1
-              client_offset when is_integer(client_offset) -> client_offset + 1
-              _ -> nil
+        if partitions_for_type != [] do
+          Enum.each(partitions_for_type, fn {{topic, _event_type, partition}, stored_offset} ->
+            effective_offset =
+              case offset do
+                nil -> stored_offset + 1
+                client_offset when is_integer(client_offset) -> client_offset + 1
+                _ -> nil
+              end
+
+            if effective_offset != nil do
+              IO.inspect({:replay_consumer, topic, et, partition, effective_offset}, label: "SSE.set_subscriptions starting replay")
+              {:ok, _pid} =
+                RigKafka.ReplayKafkaConsumer.start_link(%{
+                  conn_pid: self(),
+                  topic: topic,
+                  event_type: et,
+                  constraints: constraints,
+                  start_offset: effective_offset,
+                  partition: partition
+                })
             end
+          end)
+        else
+          # No stored offsets, but enable_replay is true, so just refresh subscriptions as live
+          live_sub = %Rig.Subscription{
+            event_type: et,
+            constraints: constraints,
+            start_offset: nil,
+            enable_replay: true
+          }
 
-          if effective_offset != nil do
-            IO.inspect({:replay_consumer, topic, et, partition, effective_offset}, label: "SSE.set_subscriptions starting replay")
-            {:ok, _pid} =
-              RigKafka.ReplayKafkaConsumer.start_link(%{
-                conn_pid: self(),
-                topic: topic,
-                event_type: et,
-                constraints: constraints,
-                start_offset: effective_offset,
-                partition: partition
-              })
-          end
-        end)
+          EventFilter.refresh_subscriptions([live_sub], [])
+        end
       else
+        # enable_replay is false, always treat as live subscription (no replay)
         live_sub = %Rig.Subscription{
           event_type: et,
           constraints: constraints,
-          start_offset: nil
+          start_offset: nil,
+          enable_replay: false
         }
 
         EventFilter.refresh_subscriptions([live_sub], [])
