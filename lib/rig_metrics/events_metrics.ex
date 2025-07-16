@@ -43,7 +43,38 @@ defmodule RigMetrics.EventsMetrics do
 
     # Attach defined events to a telemetry callback
     :telemetry.attach_many("events-metrics", events, &__MODULE__.handle_event/4, nil)
+    # Telemetry event handler
+  @doc false
+  def handle_event([:events, :count_forwarded], _measurements, %{type: type}, _config) do
+    Counter.inc(name: :rig_consumed_events_forwarded_total, labels: [type])
   end
+
+  def handle_event([:events, :count_consumed], _measurements, %{source: source, topic: topic}, _config) do
+    Counter.inc(name: :rig_consumed_events_total, labels: [source, topic])
+  end
+
+  def handle_event([:events, :count_consume_failed], _measurements, %{source: source, topic: topic}, _config) do
+    Counter.inc(name: :rig_consumed_events_failed_total, labels: [source, topic])
+  end
+
+  def handle_event([:events, :histogram_consumer_time], _measurements, %{source: source, topic: topic, time: time}, _config) do
+    Histogram.observe(
+      [name: :rig_consumed_event_processing_duration_milliseconds, labels: [source, topic]],
+      time
+    )
+  end
+
+  def handle_event([:events, :count_produced], _measurements, %{target: target, topic: topic}, _config) do
+    Counter.inc(name: :rig_produced_events_total, labels: [target, topic])
+  end
+
+  def handle_event([:events, :count_produce_failed], _measurements, %{target: target, topic: topic}, _config) do
+    Counter.inc(name: :rig_produced_events_failed_total, labels: [target, topic])
+  end
+
+  # Fallback for unhandled events
+  def handle_event(_event, _measurements, _metadata, _config), do: :ok
+end
 
   # ---
 

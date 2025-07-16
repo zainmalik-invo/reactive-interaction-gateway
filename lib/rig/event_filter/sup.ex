@@ -119,43 +119,40 @@ defmodule Rig.EventFilter.Sup do
       "Reloading extractor config from #{String.replace(extractor_config_path_or_json, "\n", "")}"
     end)
 
-    {:ok, new_extractor_map} = Config.new(extractor_config_path_or_json)
+    case Config.new(extractor_config_path_or_json) do
+      {:ok, new_extractor_map} ->
+        # Make sure the current event types are also present in the map, even if they're
+        # empty, so we don't "forget" about them:
+        current_event_types = Map.keys(current_extractor_map)
 
-    # Make sure the current event types are also present in the map, even if they're
-    # empty, so we don't "forget" about them:
-    current_event_types = Map.keys(current_extractor_map)
+        combined_extractor_map =
+          Map.merge(
+            for(event_type <- current_event_types, into: %{}, do: {event_type, %{}}),
+            new_extractor_map
+          )
 
-    combined_extractor_map =
-      Map.merge(
-        for(event_type <- current_event_types, into: %{}, do: {event_type, %{}}),
-        new_extractor_map
-      )
+        for {event_type, filter_config} <- combined_extractor_map do
+          # The config should be checked regardless of whether the filter is alive or not:
+          :ok = Config.check_filter_config(filter_config)
 
-    for {event_type, filter_config} <- combined_extractor_map do
-      # The config should be checked regardless of whether the filter is alive or not:
-      :ok = Config.check_filter_config(filter_config)
+          event_type
+          |> get_filter_pid()
+          |> reload_filter_config(filter_config)
 
-      event_type
-      |> get_filter_pid()
-      |> reload_filter_config(filter_config)
-
-      Logger.debug(fn ->
-        if filter_config == %{} do
-          "Extractor config for event type #{event_type} has been removed."
-        else
-          "Extractor config for event type #{event_type} has been updated."
+          Logger.debug(fn ->
+            if filter_config == %{} do
+              "Extractor config for event type #{event_type} has been removed."
+            else
+              "Extractor config for event type #{event_type} has been updated."
+            end
+          end)
         end
-      end)
+
+        new_extractor_map
+
+      {:error, reason} ->
+        raise "Failed to load extractor config: #{inspect(reason)}"
     end
-
-    new_extractor_map
-  rescue
-    err ->
-      Logger.error(
-        "Failed to reload extractor config: #{inspect(err)}\n#{inspect(__STACKTRACE__)}"
-      )
-
-      nil
   end
 
   # ---

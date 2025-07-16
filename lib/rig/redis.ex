@@ -328,7 +328,8 @@ defmodule Rig.Redis do
     result = Redix.command(conn, ["HSET", hash_key, field, value])
     if match?({:ok, _}, result) do
       # Set expiry on the hash key
-      _ = Redix.command(conn, ["EXPIRE", hash_key, Integer.to_string(ttl)])
+      IO.inspect("SET EXPIRE KEY")
+      _ = Redix.command(conn, ["EXPIRE", hash_key, Integer.to_string(ttl)]) |> IO.inspect()
     end
     {:reply, result, state}
   end

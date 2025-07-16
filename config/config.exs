@@ -14,7 +14,7 @@ config :rig, TodoFakeModuleCauseUpdateDocsCannotHandleNestedTuples,
   key: {:system, "JWT_SECRET_KEY", ""},
   alg: {:system, "JWT_ALG", "HS256"}
 
-config :rig, Rig.EventFilter.Sup, extractor_config_path_or_json: extractor_path_or_json
+config :rig, Rig.EventFilter.Sup, extractor_config_path_or_json: "examples/extractor.json"
 
 config :rig, RIG.JWT, jwt_conf: jwt_conf
 
