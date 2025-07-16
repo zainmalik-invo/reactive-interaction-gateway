@@ -213,6 +213,8 @@ For applications that need to handle reconnections and receive missed messages, 
         {
           eventType: "chatroom_message",
           oneOf: [{}], // No constraints - receive all messages
+          enable_replay: true, // <--- Enable replay for this event type
+          cache_ttl: 60,       // <--- Store offsets for 60 seconds (for demo/testing)
         },
       ];
 
