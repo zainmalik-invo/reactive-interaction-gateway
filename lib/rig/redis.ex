@@ -16,9 +16,16 @@ defmodule Rig.Redis do
   Store Kafka offset for a client_id, topic, event_type, and partition
   """
   def store_offset(client_id, topic, event_type, partition, offset) do
+    store_offset(client_id, topic, event_type, partition, offset, nil)
+  end
+
+  @doc """
+  Store Kafka offset for a client_id, topic, event_type, and partition, with optional TTL (in seconds)
+  """
+  def store_offset(client_id, topic, event_type, partition, offset, ttl) do
     hash_key = "rig:offsets:#{client_id}"
 
-    IO.inspect({:store_offset, client_id, topic, event_type, partition, offset}, label: "Rig.Redis.store_offset/6")
+    IO.inspect({:store_offset, client_id, topic, event_type, partition, offset, ttl}, label: "Rig.Redis.store_offset/7")
 
     # Convert partition and offset to integers if they're strings
     partition_int =
@@ -54,9 +61,13 @@ defmodule Rig.Redis do
     # Use the converted partition_int in the field key
     field = "#{topic}:#{event_type}:#{partition_int}"
 
-    IO.inspect({:hset, hash_key, field, offset_int}, label: "Rig.Redis.store_offset/6 HSET")
+    IO.inspect({:hset, hash_key, field, offset_int, ttl}, label: "Rig.Redis.store_offset/7 HSET")
 
-    GenServer.call(__MODULE__, {:hset, hash_key, field, to_string(offset_int)})
+    if is_integer(ttl) and ttl > 0 do
+      GenServer.call(__MODULE__, {:hset_with_expire, hash_key, field, to_string(offset_int), ttl})
+    else
+      GenServer.call(__MODULE__, {:hset, hash_key, field, to_string(offset_int)})
+    end
   end
 
   @doc """
@@ -295,6 +306,16 @@ defmodule Rig.Redis do
   @impl true
   def handle_call({:hset, hash_key, field, value}, _from, %{conn: conn} = state) do
     result = Redix.command(conn, ["HSET", hash_key, field, value])
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:hset_with_expire, hash_key, field, value, ttl}, _from, %{conn: conn} = state) do
+    result = Redix.command(conn, ["HSET", hash_key, field, value])
+    if result == {:ok, _} do
+      # Set expiry on the hash key
+      _ = Redix.command(conn, ["EXPIRE", hash_key, Integer.to_string(ttl)])
+    end
     {:reply, result, state}
   end
 

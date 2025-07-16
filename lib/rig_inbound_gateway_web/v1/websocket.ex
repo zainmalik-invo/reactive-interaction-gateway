@@ -141,23 +141,33 @@ defmodule RigInboundGatewayWeb.V1.Websocket do
         end
 
       # Only store offset if enable_replay is true for this event_type
-      enable_replay? =
+      sub =
         case state[:subscriptions] do
           subs when is_list(subs) ->
-            Enum.any?(subs, fn sub ->
-              sub.event_type == event.type and Map.get(sub, :enable_replay, false)
-            end)
-          _ -> false
+            Enum.find(subs, fn sub -> sub.event_type == event.type end)
+          _ -> nil
         end
 
+      enable_replay? = sub && Map.get(sub, :enable_replay, false)
+
       if enable_replay? do
-        IO.inspect({:store_offset, state.client_id, topic, event.type, partition, offset}, label: "WS.store_offset")
+        # Determine effective TTL
+        max_cache_ttl = Application.get_env(:rig, :max_cache_ttl, 604800)
+        sub_ttl = Map.get(sub, :cache_ttl)
+        effective_ttl =
+          cond do
+            is_integer(sub_ttl) and sub_ttl > 0 -> min(sub_ttl, max_cache_ttl)
+            true -> max_cache_ttl
+          end
+
+        IO.inspect({:store_offset, state.client_id, topic, event.type, partition, offset, effective_ttl}, label: "WS.store_offset")
         Rig.Redis.store_offset(
           state.client_id,
           topic,
           event.type,
           partition,
-          offset
+          offset,
+          effective_ttl
         )
       end
     end

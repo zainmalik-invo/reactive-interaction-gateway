@@ -32,7 +32,8 @@ defmodule Rig.Subscription do
           constraints: constraints,
           start_offset: non_neg_integer() | nil,
           partition: non_neg_integer() | nil,
-          enable_replay: boolean()
+          enable_replay: boolean(),
+          cache_ttl: non_neg_integer() | nil
         }
 
   @derive Jason.Encoder
@@ -41,7 +42,8 @@ defmodule Rig.Subscription do
             constraints: [],
             start_offset: nil,
             partition: nil,
-            enable_replay: false
+            enable_replay: false,
+            cache_ttl: nil
 
   defimpl String.Chars do
     alias Rig.Subscription
@@ -59,7 +61,8 @@ defmodule Rig.Subscription do
       event_type: event_type(params),
       constraints: constraints(params),
       start_offset: start_offset(params),
-      enable_replay: enable_replay(params)
+      enable_replay: enable_replay(params),
+      cache_ttl: cache_ttl(params)
     }
 
     subscription = struct!(__MODULE__, params)
@@ -108,19 +111,30 @@ defmodule Rig.Subscription do
   defp enable_replay(%{"enableReplay" => val}) when val in [true, false], do: val
   defp enable_replay(_), do: false
 
+  defp cache_ttl(%{cache_ttl: val}) when is_integer(val) and val > 0, do: val
+  defp cache_ttl(%{"cache_ttl" => val}) when is_integer(val) and val > 0, do: val
+  defp cache_ttl(%{"cacheTtl" => val}) when is_integer(val) and val > 0, do: val
+  defp cache_ttl(_), do: nil
+
   # ---
 
   defp validate(%__MODULE__{
          event_type: event_type,
          constraints: constraints,
          start_offset: start_offset,
-         enable_replay: enable_replay
+         enable_replay: enable_replay,
+         cache_ttl: cache_ttl
        }) do
     validate_event_type(event_type)
     validate_constraints(constraints)
     validate_start_offset(start_offset)
     validate_enable_replay(enable_replay)
+    validate_cache_ttl(cache_ttl)
   end
+
+  defp validate_cache_ttl(nil), do: :ok
+  defp validate_cache_ttl(val) when is_integer(val) and val > 0, do: :ok
+  defp validate_cache_ttl(_), do: throw({:error, "cache_ttl must be a positive integer"})
 
   defp validate_enable_replay(val) when is_boolean(val), do: :ok
   defp validate_enable_replay(_), do: throw({:error, "enable_replay must be a boolean"})
