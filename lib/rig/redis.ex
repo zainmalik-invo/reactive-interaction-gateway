@@ -326,7 +326,7 @@ defmodule Rig.Redis do
   @impl true
   def handle_call({:hset_with_expire, hash_key, field, value, ttl}, _from, %{conn: conn} = state) do
     result = Redix.command(conn, ["HSET", hash_key, field, value])
-    if result == {:ok, _} do
+    if match?({:ok, _}, result) do
       # Set expiry on the hash key
       _ = Redix.command(conn, ["EXPIRE", hash_key, Integer.to_string(ttl)])
     end
